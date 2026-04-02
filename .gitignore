@@ -1,0 +1,13 @@
+node_modules/
+.env
+dist/
+build/
+.DS_Store
+*.log
+.vscode/
+bin/
+obj/
+backend/Api/bin/
+backend/Api/obj/
+frontend/dist/
+frontend/node_modules/

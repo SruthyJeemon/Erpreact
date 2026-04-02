@@ -1,0 +1,132 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  /* iOS Safari */
+  overflow-x: hidden;
+}
+
+.App {
+  width: 100%;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  /* iOS Safari */
+  min-height: 100dvh;
+  /* Dynamic viewport height */
+  margin: 0;
+  padding: 0;
+  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* User requested font size override */
+@media (min-width: 900px) {
+  .css-1tqsbyf-MuiTypography-root {
+    font-size: 1.7rem !important;
+  }
+
+  /* Adding stable selector as backup */
+  h4.MuiTypography-root {
+    font-size: 1.7rem;
+  }
+}
+
+.add-items-modal-header {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #2C3E50 !important;
+  color: #ffffff;
+  border: none;
+}
+
+.MuiButton-contained,
+.MuiButton-containedPrimary {
+  background-color: #cf2c2c !important;
+  color: white !important;
+  border-radius: 50px !important;
+}
+
+.MuiButton-contained:hover,
+.MuiButton-containedPrimary:hover {
+  background-color: #0888c5 !important;
+}
+
+/* Global Font Size Override for Controls */
+input,
+textarea,
+select,
+button,
+.MuiInputBase-input,
+.MuiInputLabel-root,
+.MuiButton-root,
+.MuiMenuItem-root,
+.MuiSelect-select,
+.MuiTab-root,
+.MuiChip-label,
+.MuiTypography-body1,
+.MuiTypography-body2 {
+  font-size: 14px !important;
+}
+
+.admin-page-container {
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 70px);
+  animation: fadeIn 0.3s ease-in;
+  background-color: #ffffff;
+  border-radius: 8px;
+  padding: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}

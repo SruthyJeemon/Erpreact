@@ -1,0 +1,515 @@
+Text                                                                                                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+                                                                                                                                                                                                                                                             
+            CREATE PROCEDURE [dbo].[Sp_Warehousesalesreturn]
+                                                                                                                                                                                                 
+                @Id varchar(50) = null,
+                                                                                                                                                                                                                      
+                @Userid varchar(50) = null,
+                                                                                                                                                                                                                  
+                @Warehouseid varchar(50) = null,
+                                                                                                                                                                                                             
+                @Catelogid varchar(50) = null,
+                                                                                                                                                                                                               
+                @Customername varchar(50) = null,
+                                                                                                                                                                                                            
+                @Receiveddate datetime = null,
+                                                                                                                                                                                                               
+                @Remarks varchar(max) = null,
+                                                                                                                                                                                                                
+                @Status varchar(50) = null,
+                                                                                                                                                                                                                  
+                @Isdelete varchar(50) = null,
+                                                                                                                                                                                                                
+                @Warehousemanager varchar(50) = null,
+                                                                                                                                                                                                        
+                @Salesmanager varchar(50) = null,
+                                                                                                                                                                                                            
+                @Receiptno varchar(50) = null,
+                                                                                                                                                                                                               
+                @Salescoordinator varchar(50) = null,
+                                                                                                                                                                                                        
+                @Salescoordinator_userid varchar(50) = null,
+                                                                                                                                                                                                 
+                @Amountsare varchar(50) = null,
+                                                                                                                                                                                                              
+                @Subtotal varchar(50) = null,
+                                                                                                                                                                                                                
+                @Taxamount varchar(50) = null,
+                                                                                                                                                                                                               
+                @Grandtotal varchar(50) = null,
+                                                                                                                                                                                                              
+                @Salescoremarks varchar(max) = null,
+                                                                                                                                                                                                         
+                @Statussales varchar(50)=null,
+                                                                                                                                                                                                               
+                @Query int
+                                                                                                                                                                                                                                   
+            AS
+                                                                                                                                                                                                                                               
+            BEGIN
+                                                                                                                                                                                                                                            
+                SET NOCOUNT ON;
+                                                                                                                                                                                                                              
+                IF(@Query = 1)
+                                                                                                                                                                                                                               
+                BEGIN
+                                                                                                                                                                                                                                        
+                    INSERT INTO Tbl_Warehousesalesreturn (Userid, Warehouseid, Catelogid, Customername, Receiveddate, Remarks, Status, Isdelete, Warehousemanager, Salesmanager, Receiptno, Salescoordinator, Salescoordinator_userid)
+                       
+                    VALUES (@Userid, @Warehouseid, @Catelogid, @Customername, @Receiveddate, @Remarks, @Status, @Isdelete, @Warehousemanager, @Salesmanager, @Receiptno, @Salescoordinator, @Salescoordinator_userid)
+                                        
+                    SET @Id = SCOPE_IDENTITY()
+                                                                                                                                                                                                               
+                    SELECT @Id as Id
+                                                                                                                                                                                                                         
+                END
+                                                                                                                                                                                                                                          
+                IF(@Query = 2)
+                                                                                                                                                                                                                               
+                BEGIN
+                                                                                                                                                                                                                                        
+                    UPDATE Tbl_Warehousesalesreturn SET Warehouseid=@Warehouseid, Catelogid=@Catelogid, Customername=@Customername, Receiveddate=@Receiveddate, Remarks=@Remarks WHERE Id=@Id
+                                                                
+                END
+                                                                                                                                                                                                                                          
+                IF(@Query = 3)
+                                                                                                                                                                                                                               
+                BEGIN
+                                                                                                                                                                                                                                        
+            select Tbl_Warehousesalesreturn.*,Tbl_Customer.Customerdisplayname,Tbl_Catelog.Catelogname,Tbl_Registration.Firstname from Tbl_Warehousesalesreturn 
+                                                                                             
+left join Tbl_Customer on Tbl_Customer.Id =Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                             
+left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                   
+left join Tbl_Registration on Tbl_Registration.Userid=Tbl_Warehousesalesreturn.Userid
+                                                                                                                                                                        
+where Tbl_Warehousesalesreturn.Isdelete=@Isdelete and Tbl_Warehousesalesreturn.Status = @Status
+                                                                                                                                                              
+                    ORDER BY Tbl_Warehousesalesreturn.Id DESC
+                                                                                                                                                                                                
+                END
+                                                                                                                                                                                                                                          
+                IF(@Query = 5)
+                                                                                                                                                                                                                               
+                BEGIN
+                                                                                                                                                                                                                                        
+                    UPDATE Tbl_Warehousesalesreturn SET Status = 'Manager Approval Request Send', Warehousemanager = @Warehousemanager WHERE Id = @Id
+                                                                                                        
+                END
+                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+                if(@Query =6)
+                                                                                                                                                                                                                                
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+--select Tbl_Warehousesalesreturn.*,Tbl_Catelog.Catelogname,Tbl_Customer.Customerdisplayname,Tbl_Stocklocation.Name from Tbl_Warehousesalesreturn
+                                                                                                            
+--left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                 
+--left join Tbl_Customer on Tbl_Customer.Id=Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                            
+--left join Tbl_Stocklocation on Tbl_Stocklocation.Id=Tbl_Warehousesalesreturn.Warehouseid
+                                                                                                                                                                   
+
+                                                                                                                                                                                                                                                             
+--where Tbl_Warehousesalesreturn.Warehousemanager=@Warehousemanager and Tbl_Warehousesalesreturn.Isdelete=@Isdelete and Tbl_Warehousesalesreturn.Warehouseid=@Warehouseid
+                                                                                    
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+SELECT wr.*, c.Catelogname, cu.Customerdisplayname, sl.Name
+                                                                                                                                                                                                  
+FROM Tbl_Warehousesalesreturn wr
+                                                                                                                                                                                                                             
+LEFT JOIN Tbl_Catelog c ON c.Id = wr.Catelogid
+                                                                                                                                                                                                               
+LEFT JOIN Tbl_Customer cu ON cu.Id = wr.Customername
+                                                                                                                                                                                                         
+LEFT JOIN Tbl_Stocklocation sl ON sl.Id = wr.Warehouseid
+                                                                                                                                                                                                     
+CROSS APPLY  (SELECT value FROM dbo.SplitString(@Warehouseid, ',')) AS s
+                                                                                                                                                                                     
+WHERE wr.Warehousemanager = @Warehousemanager
+                                                                                                                                                                                                                
+  AND wr.Isdelete = @Isdelete
+                                                                                                                                                                                                                                
+  AND wr.Warehouseid = TRY_CAST(s.value AS INT);
+                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+if(@Query = 7)
+                                                                                                                                                                                                                                               
+
+                                                                                                                                                                                                                                                             
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+select Customername,Userid from	Tbl_Warehousesalesreturn where Id=@Id
+                                                                                                                                                                                        
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+if(@Query = 8)
+                                                                                                                                                                                                                                               
+
+                                                                                                                                                                                                                                                             
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+update Tbl_Warehousesalesreturn  set Receiptno=@Receiptno,Warehousemanager=@Warehousemanager where Id=@Id
+                                                                                                                                                    
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+if(@Query =9)
+                                                                                                                                                                                                                                                
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+update Tbl_Warehousesalesreturn  set Isdelete=@Isdelete where Id=@Id
+                                                                                                                                                                                         
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+if(@Query =10)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+--select Tbl_Warehousesalesreturn.*,Tbl_Catelog.Catelogname,Tbl_Customer.Customerdisplayname,Tbl_Stocklocation.Name,Tbl_Purchasesalesreturn.Creditno from Tbl_Warehousesalesreturn
+                                                                           
+--left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                 
+--left join Tbl_Customer on Tbl_Customer.Id=Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                            
+--left join Tbl_Stocklocation on Tbl_Stocklocation.Id=Tbl_Warehousesalesreturn.Warehouseid
+                                                                                                                                                                   
+--left join Tbl_Purchasesalesreturn on Tbl_Purchasesalesreturn.Warehousesalesreturnid=Tbl_Warehousesalesreturn.Id
+                                                                                                                                            
+--WHERE 
+                                                                                                                                                                                                                                                     
+--    Tbl_Warehousesalesreturn.Warehousemanager = @Warehousemanager AND 
+                                                                                                                                                                                     
+--    Tbl_Warehousesalesreturn.Isdelete = @Isdelete AND 
+                                                                                                                                                                                                     
+--    Tbl_Warehousesalesreturn.Catelogid = @Catelogid AND 
+                                                                                                                                                                                                   
+--    Tbl_Warehousesalesreturn.Status = @Status AND 
+                                                                                                                                                                                                         
+--    Tbl_Warehousesalesreturn.Salesmanager IN (SELECT value FROM dbo.SplitString(@Salesmanager, ',')) AND 
+                                                                                                                                                  
+--    (
+                                                                                                                                                                                                                                                      
+--        Tbl_Warehousesalesreturn.Salescoordinator IN (SELECT value FROM dbo.SplitString(@Salescoordinator, ',')) 
+                                                                                                                                          
+       
+                                                                                                                                                                                                                                                      
+--    )
+                                                                                                                                                                                                                                                      
+
+                                                                                                                                                                                                                                                             
+SELECT 
+                                                                                                                                                                                                                                                      
+    W.Id,
+                                                                                                                                                                                                                                                    
+    W.Userid,
+                                                                                                                                                                                                                                                
+    W.Warehouseid,
+                                                                                                                                                                                                                                           
+    W.Catelogid,
+                                                                                                                                                                                                                                             
+    W.Customername,
+                                                                                                                                                                                                                                          
+    W.Receiveddate,
+                                                                                                                                                                                                                                          
+    W.Remarks,
+                                                                                                                                                                                                                                               
+    W.Status,
+                                                                                                                                                                                                                                                
+    W.Isdelete,
+                                                                                                                                                                                                                                              
+    W.Warehousemanager,
+                                                                                                                                                                                                                                      
+    W.Salesmanager,
+                                                                                                                                                                                                                                          
+    W.Receiptno,
+                                                                                                                                                                                                                                             
+    W.Salescoordinator,
+                                                                                                                                                                                                                                      
+    W.Amountsare,
+                                                                                                                                                                                                                                            
+    W.Subtotal,
+                                                                                                                                                                                                                                              
+    W.Taxamount,
+                                                                                                                                                                                                                                             
+    W.Grandtotal,
+                                                                                                                                                                                                                                            
+    W.Salescoremarks,
+                                                                                                                                                                                                                                        
+    W.Salescoordinator_userid,
+                                                                                                                                                                                                                               
+    C.Catelogname,
+                                                                                                                                                                                                                                           
+    CU.Customerdisplayname,
+                                                                                                                                                                                                                                  
+    S.Name,
+                                                                                                                                                                                                                                                  
+    P.Creditno
+                                                                                                                                                                                                                                               
+FROM Tbl_Warehousesalesreturn W
+                                                                                                                                                                                                                              
+LEFT JOIN Tbl_Catelog C ON C.Id = W.Catelogid
+                                                                                                                                                                                                                
+LEFT JOIN Tbl_Customer CU ON CU.Id = W.Customername
+                                                                                                                                                                                                          
+LEFT JOIN Tbl_Stocklocation S ON S.Id = W.Warehouseid
+                                                                                                                                                                                                        
+-- Get only one Creditno per Warehouse return
+                                                                                                                                                                                                                
+OUTER APPLY (
+                                                                                                                                                                                                                                                
+    SELECT TOP 1 Creditno
+                                                                                                                                                                                                                                    
+    FROM Tbl_Purchasesalesreturn P
+                                                                                                                                                                                                                           
+    WHERE P.Warehousesalesreturnid = W.Id  and P.Isdelete=0
+                                                                                                                                                                                                  
+    ORDER BY P.Id ASC
+                                                                                                                                                                                                                                        
+) P
+                                                                                                                                                                                                                                                          
+WHERE 
+                                                                                                                                                                                                                                                       
+    W.Warehousemanager =@Warehousemanager AND 
+                                                                                                                                                                                                               
+    W.Isdelete = @Isdelete AND 
+                                                                                                                                                                                                                              
+    W.Catelogid = @Catelogid AND 
+                                                                                                                                                                                                                            
+    W.Status = @Status AND 
+                                                                                                                                                                                                                                  
+    W.Salesmanager IN (SELECT value FROM dbo.SplitString(@Salesmanager, ',')) AND 
+                                                                                                                                                                           
+    W.Salescoordinator IN (SELECT value FROM dbo.SplitString(@Salescoordinator, ','));
+                                                                                                                                                                       
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+if(@Query =11)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+update Tbl_Warehousesalesreturn set Salesmanager=@Salesmanager,Status=@Status where Id=@Id
+                                                                                                                                                                   
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+if(@Query =12)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+--select Tbl_Warehousesalesreturn.*,Tbl_Catelog.Catelogname,Tbl_Customer.Customerdisplayname,Tbl_Stocklocation.Name,Tbl_Salesmanagerwarehousesalesreturn.Enterdate,Tbl_Registration.Firstname from Tbl_Warehousesalesreturn
+                                  
+--left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                 
+--left join Tbl_Customer on Tbl_Customer.Id=Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                            
+--left join Tbl_Stocklocation on Tbl_Stocklocation.Id=Tbl_Warehousesalesreturn.Warehouseid
+                                                                                                                                                                   
+--left join Tbl_Salesmanagerwarehousesalesreturn on Tbl_Salesmanagerwarehousesalesreturn.Warehousesalesreturnid=Tbl_Warehousesalesreturn.Id
+                                                                                                                  
+--left join Tbl_Registration on Tbl_Registration.Userid=Tbl_Salesmanagerwarehousesalesreturn.Userid
+                                                                                                                                                          
+--where Tbl_Warehousesalesreturn.Warehousemanager=@Warehousemanager and Tbl_Warehousesalesreturn.Isdelete=@Isdelete  and Tbl_Warehousesalesreturn.Catelogid=@Catelogid and Tbl_Warehousesalesreturn.Salesmanager=@Salesmanager  and Tbl_Warehousesalesreturn.St
+atus=@Status
+                                                                                                                                                                                                                                                 
+--and Tbl_Salesmanagerwarehousesalesreturn.Status=@Statussales
+                                                                                                                                                                                               
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+select distinct Tbl_Warehousesalesreturn.*,Tbl_Catelog.Catelogname,Tbl_Customer.Customerdisplayname,Tbl_Stocklocation.Name,Tbl_Salesmanagerwarehousesalesreturn.Enterdate,Tbl_Registration.Firstname,Tbl_Purchasesalesreturn.Creditno as Creditno from Tbl_Ware
+housesalesreturn
+                                                                                                                                                                                                                                             
+left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                   
+left join Tbl_Customer on Tbl_Customer.Id=Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                              
+left join Tbl_Stocklocation on Tbl_Stocklocation.Id=Tbl_Warehousesalesreturn.Warehouseid
+                                                                                                                                                                     
+left join Tbl_Salesmanagerwarehousesalesreturn on Tbl_Salesmanagerwarehousesalesreturn.Warehousesalesreturnid=Tbl_Warehousesalesreturn.Id
+                                                                                                                    
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+left join Tbl_Salesmanagerwarehousereturndetails on Tbl_Salesmanagerwarehousereturndetails.Salesmanagerreturnsid= CONVERT(VARCHAR, Tbl_Salesmanagerwarehousesalesreturn.Id)
+                                                                                  
+
+                                                                                                                                                                                                                                                             
+left join Tbl_Registration on Tbl_Registration.Userid=Tbl_Salesmanagerwarehousesalesreturn.Userid
+                                                                                                                                                            
+left join Tbl_Purchasesalesreturn on Tbl_Purchasesalesreturn.Warehousesalesreturnid= Tbl_Warehousesalesreturn.Id 
+                                                                                                                                            
+where Tbl_Warehousesalesreturn.Warehousemanager=@Warehousemanager and Tbl_Warehousesalesreturn.Isdelete=@Isdelete  and Tbl_Warehousesalesreturn.Catelogid=@Catelogid and Tbl_Warehousesalesreturn.Salesmanager=@Salesmanager  and Tbl_Warehousesalesreturn.Stat
+us=@Status
+                                                                                                                                                                                                                                                   
+and Tbl_Salesmanagerwarehousesalesreturn.Status IN (SELECT value FROM dbo.SplitString('3,2', ',')) and  Tbl_Salesmanagerwarehousereturndetails.Creditnotestatus in('Creditnote Eligible') 
+                                                                   
+and  (Tbl_Purchasesalesreturn.Creditno IS  NULL
+                                                                                                                                                                                                              
+or Tbl_Purchasesalesreturn.Creditno = '') 
+                                                                                                                                                                                                                   
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+--@Statussales
+                                                                                                                                                                                                                                               
+end
+                                                                                                                                                                                                                                                          
+if(@Query =13)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+update Tbl_Warehousesalesreturn set Status=@Status where Id=@Id
+                                                                                                                                                                                              
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+if(@Query =14)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+
+                                                                                                                                                                                                                                                             
+select Tbl_Warehousesalesreturn.*,Tbl_Customer.Customerdisplayname,Tbl_Catelog.Catelogname,Tbl_Registration.Firstname from Tbl_Warehousesalesreturn 
+                                                                                                         
+left join Tbl_Customer on Tbl_Customer.Id =Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                             
+left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                   
+left join Tbl_Registration on Tbl_Registration.Userid=Tbl_Warehousesalesreturn.Userid
+                                                                                                                                                                        
+where Tbl_Warehousesalesreturn.Isdelete=@Isdelete and Tbl_Warehousesalesreturn.Status = @Status and Warehousemanager=@Warehousemanager  
+                                                                                                                     
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+
+                                                                                                                                                                                                                                                             
+if(@Query =15)
+                                                                                                                                                                                                                                               
+begin
+                                                                                                                                                                                                                                                        
+select distinct Tbl_Warehousesalesreturn.*,Tbl_Catelog.Catelogname,Tbl_Customer.Customerdisplayname,Tbl_Stocklocation.Name,Tbl_Salesmanagerwarehousesalesreturn.Enterdate,Tbl_Registration.Firstname,Tbl_Purchasesalesreturn.Creditno from Tbl_Warehousesalesre
+turn
+                                                                                                                                                                                                                                                         
+left join Tbl_Catelog on Tbl_Catelog.Id=Tbl_Warehousesalesreturn.Catelogid
+                                                                                                                                                                                   
+left join Tbl_Customer on Tbl_Customer.Id=Tbl_Warehousesalesreturn.Customername
+                                                                                                                                                                              
+left join Tbl_Stocklocation on Tbl_Stocklocation.Id=Tbl_Warehousesalesreturn.Warehouseid
+                                                                                                                                                                     
+left join Tbl_Salesmanagerwarehousesalesreturn on Tbl_Salesmanagerwarehousesalesreturn.Warehousesalesreturnid=Tbl_Warehousesalesreturn.Id
+                                                                                                                    
+
+                                                                                                                                                                                                                                                             
+
+                                                                                                                                                                                                                                                             
+left join Tbl_Salesmanagerwarehousereturndetails on Tbl_Salesmanagerwarehousereturndetails.Salesmanagerreturnsid= CONVERT(VARCHAR, Tbl_Salesmanagerwarehousesalesreturn.Id)
+                                                                                  
+
+                                                                                                                                                                                                                                                             
+left join Tbl_Registration on Tbl_Registration.Userid=Tbl_Salesmanagerwarehousesalesreturn.Userid
+                                                                                                                                                            
+left join Tbl_Purchasesalesreturn on Tbl_Purchasesalesreturn.Warehousesalesreturnid= Tbl_Warehousesalesreturn.Id 
+                                                                                                                                            
+where Tbl_Warehousesalesreturn.Warehousemanager=@Warehousemanager and Tbl_Warehousesalesreturn.Isdelete=@Isdelete  and Tbl_Warehousesalesreturn.Catelogid=@Catelogid and Tbl_Warehousesalesreturn.Salesmanager=@Salesmanager  and Tbl_Warehousesalesreturn.Stat
+us=@Status
+                                                                                                                                                                                                                                                   
+and Tbl_Salesmanagerwarehousesalesreturn.Status IN (SELECT value FROM dbo.SplitString(@Statussales, ',')) and  Tbl_Salesmanagerwarehousereturndetails.Creditnotestatus in('Creditnote Eligible') 
+                                                            
+and Tbl_Purchasesalesreturn.Isdelete=0
+                                                                                                                                                                                                                       
+
+                                                                                                                                                                                                                                                             
+end
+                                                                                                                                                                                                                                                          
+                IF(@Query = 16)
+                                                                                                                                                                                                                              
+                BEGIN
+                                                                                                                                                                                                                                        
+                    UPDATE Tbl_Warehousesalesreturn SET Salescoordinator_userid=@Salescoordinator_userid, Salescoordinator=@Salescoordinator, Amountsare=@Amountsare, Subtotal=@Subtotal, Taxamount=@Taxamount, Grandtotal=@Grandtotal, Salescoremarks=@Salesco
+remarks WHERE Id=@Id
+                                                                                                                                                                                                                                         
+                END
+                                                                                                                                                                                                                                          
+                IF(@Query = 17)
+                                                                                                                                                                                                                              
+                BEGIN
+                                                                                                                                                                                                                                        
+                    UPDATE Tbl_Warehousesalesreturn SET Salescoordinator=@Salescoordinator WHERE Id=@Id
+                                                                                                                                                      
+                END
+                                                                                                                                                                                                                                          
+            END                                                                                                                                                                                                                                                

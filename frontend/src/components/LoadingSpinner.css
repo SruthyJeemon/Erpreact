@@ -1,0 +1,134 @@
+/* Clean and Fast Loading Spinner Component Styles */
+.loading-spinner-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  gap: 12px;
+}
+
+.loading-spinner-fullscreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  gap: 12px;
+}
+
+.loading-spinner {
+  position: relative;
+  display: inline-block;
+}
+
+/* Clean single ring spinner - fast and smooth */
+.spinner-ring {
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 3px solid rgba(44, 62, 80, 0.1);
+  border-top-color: #2C3E50;
+  border-right-color: #2C3E50;
+  animation: spin 0.6s linear infinite;
+}
+
+/* Inner ring removed for simplicity */
+.spinner-inner-ring {
+  display: none;
+}
+
+/* Small spinner */
+.spinner-small {
+  width: 20px;
+  height: 20px;
+}
+
+.spinner-small .spinner-ring {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+
+/* Medium spinner (default) */
+.spinner-medium {
+  width: 40px;
+  height: 40px;
+}
+
+.spinner-medium .spinner-ring {
+  width: 40px;
+  height: 40px;
+  border-width: 3px;
+}
+
+/* Large spinner */
+.spinner-large {
+  width: 60px;
+  height: 60px;
+}
+
+.spinner-large .spinner-ring {
+  width: 60px;
+  height: 60px;
+  border-width: 4px;
+}
+
+/* Fast smooth spinning animation */
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Subtle pulse animation for text */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.loading-text {
+  margin: 0;
+  color: #2C3E50;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  animation: pulse 1.5s ease-in-out infinite;
+  letter-spacing: 0.3px;
+}
+
+/* Inline loading spinner (for buttons, etc.) */
+.loading-spinner-inline {
+  display: inline-block;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+}
+
+.loading-spinner-inline .spinner-ring {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  border: 2px solid rgba(44, 62, 80, 0.1);
+  border-top-color: #2C3E50;
+  border-right-color: #2C3E50;
+  border-radius: 50%;
+  animation: spin 0.5s linear infinite;
+  box-sizing: border-box;
+  display: inline-block;
+  vertical-align: middle;
+  background: transparent;
+}
