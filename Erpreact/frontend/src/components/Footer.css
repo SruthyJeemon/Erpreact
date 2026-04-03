@@ -1,0 +1,31 @@
+.login-footer {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(10px);
+  padding: 20px;
+  font-size: 13px;
+  margin-top: auto;
+  width: 100%;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000; /* High z-index to be above everything */
+  font-weight: 500;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 768px) {
+  .login-footer {
+    padding: 16px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-footer {
+    padding: 14px;
+    font-size: 11px;
+  }
+}

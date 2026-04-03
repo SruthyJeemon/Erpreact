@@ -226,11 +226,6 @@ const LoginForm = () => {
 
         </div>
       </div>
-
-      {/* Footer - Full Width */}
-      <footer className="login-footer">
-        Copyright© 2026 All Rights Reserved By ASAS
-      </footer>
     </div>
   );
 };

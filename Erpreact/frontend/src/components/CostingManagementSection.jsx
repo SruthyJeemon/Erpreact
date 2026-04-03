@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import {
     Box,
     Typography,
@@ -39,6 +40,7 @@ import {
     Autocomplete,
     CircularProgress
 } from '@mui/material';
+import Select from '@mui/material/Select';
 import CalculateIcon from '@mui/icons-material/Calculate';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import PaymentsIcon from '@mui/icons-material/Payments';
@@ -64,7 +66,7 @@ const CostingManagementSection = () => {
     const [selectedSession, setSelectedSession] = useState(null);
     const [activeStep, setActiveStep] = useState(0);
     const steps = ['Cost Details', 'Margin Price', 'Confirm'];
-    const [expenses, setExpenses] = useState([{ id: 1, vendor: '', amount: '', refNo: '' }]);
+    const [expenses, setExpenses] = useState([{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
     const [tabValue, setTabValue] = useState(0);
     const [page, setPage] = useState(1);
     const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -80,6 +82,8 @@ const CostingManagementSection = () => {
     const [marginStrategy, setMarginStrategy] = useState({ diamond: 40, gold: 30, silver: 25 });
     const [costingSessions, setCostingSessions] = useState([]);
     const [loadingSessions, setLoadingSessions] = useState(false);
+    const [serviceProviders, setServiceProviders] = useState([]);
+    const [loadingServiceProviders, setLoadingServiceProviders] = useState(false);
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
     // Pagination variables
     const filteredCount = 3; // Placeholder for actual data filtering
@@ -102,6 +106,12 @@ const CostingManagementSection = () => {
         setSelectedSession(null);
     };
 
+    const [lastCosts, setLastCosts] = useState({});
+    const [loadingLastCosts, setLoadingLastCosts] = useState(false);
+    const [totalAedPrice, setTotalAedPrice] = useState(0);
+    const [totalQty, setTotalQty] = useState(0);
+    const [exchangeRate, setExchangeRate] = useState(3.67);
+
     const handleEditClick = () => {
         // Transition from viewing to editing in the wizard
         setViewModalOpen(false);
@@ -120,7 +130,7 @@ const CostingManagementSection = () => {
     };
 
     const addExpenseRow = () => {
-        setExpenses([...expenses, { id: Date.now(), vendor: '', amount: '', refNo: '' }]);
+        setExpenses([...expenses, { id: Date.now(), vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
     };
 
     const removeExpenseRow = (id) => {
@@ -134,15 +144,50 @@ const CostingManagementSection = () => {
     const handleClose = () => {
         setIsModalOpen(false);
         setActiveStep(0);
-        setExpenses([{ id: 1, vendor: '', amount: '', refNo: '' }]);
+        setExpenses([{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
         setSelectedSupplier(null);
         setPurchaseInvoice('');
+    };
+
+    const fetchServiceProviders = async () => {
+        setLoadingServiceProviders(true);
+        try {
+            const response = await fetch(`${API_URL}/api/supplier/service-providers`);
+            if (response.ok) {
+                const data = await response.json();
+                setServiceProviders(data.data || []);
+            }
+        } catch (error) {
+            console.error('Error fetching service providers:', error);
+        } finally {
+            setLoadingServiceProviders(false);
+        }
+    };
+
+    const fetchVendorInvoices = async (vendorId, index) => {
+        if (!vendorId) return;
+        try {
+            const userData = JSON.parse(localStorage.getItem('user') || '{}');
+            const catId = userData.catelogid || userData.Catelogid || '';
+            
+            const url = `${API_URL}/api/purchase/supplier-transactions/${vendorId}${catId ? `?catelogId=${catId}` : ''}`;
+            const response = await fetch(url);
+            if (response.ok) {
+                const data = await response.json();
+                const newExpenses = [...expenses];
+                newExpenses[index].vendorInvoices = data.data || [];
+                setExpenses(newExpenses);
+            }
+        } catch (error) {
+            console.error('Error fetching vendor invoices:', error);
+        }
     };
 
     const fetchSessions = async () => {
         setLoadingSessions(true);
         try {
-            const catelogId = localStorage.getItem('Catelogid') || '2';
+            const userData = JSON.parse(localStorage.getItem('user') || '{}');
+            const catelogId = userData.catelogid || userData.Catelogid || localStorage.getItem('Catelogid') || '2';
             const response = await fetch(`${API_URL}/api/costing/sessions?catalogId=${catelogId}`);
             if (response.ok) {
                 const data = await response.json();
@@ -158,7 +203,8 @@ const CostingManagementSection = () => {
     const fetchSupplierDetails = async () => {
         setLoadingSuppliers(true);
         try {
-            const catelogId = localStorage.getItem('Catelogid') || '2';
+            const userData = JSON.parse(localStorage.getItem('user') || '{}');
+            const catelogId = userData.catelogid || userData.Catelogid || localStorage.getItem('Catelogid') || '2';
             const response = await fetch(`${API_URL}/api/supplier/costing-suppliers?catalogId=${catelogId}`);
             if (response.ok) {
                 const data = await response.json();
@@ -172,14 +218,61 @@ const CostingManagementSection = () => {
         }
     };
 
+    const fetchLastCosts = async (itemIds) => {
+        if (!itemIds || itemIds.length === 0) return;
+        setLoadingLastCosts(true);
+        try {
+            const response = await fetch(`${API_URL}/api/costing/last-costs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemIds: itemIds.map(o => parseInt(o) || 0) })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const map = {};
+                (data.data || []).forEach(c => map[c.ItemId || c.Itemid] = c);
+                setLastCosts(map);
+            }
+        } catch (error) {
+            console.error('Error fetching last costs:', error);
+        } finally {
+            setLoadingLastCosts(false);
+        }
+    };
+
     const fetchBillItems = async (billId) => {
         setLoadingBillItems(true);
         try {
-            const response = await fetch(`${API_URL}/api/purchase/details/${billId}`);
+            const response = await fetch(`${API_URL}/api/costing/bill-items/${billId}`);
             if (response.ok) {
                 const result = await response.json();
                 if (result.success) {
-                    setBillItems(result.items || []);
+                    const items = result.data || result.items || [];
+                    setBillItems(items.map(item => ({
+                        ...item,
+                        marginD: marginStrategy.diamond,
+                        marginG: marginStrategy.gold,
+                        marginS: marginStrategy.silver
+                    })));
+                    
+                    // Calculate totals for Step 1
+                    let tQty = 0;
+                    let tAed = 0;
+                    items.forEach(item => {
+                        const qty = parseFloat(item.Qty) || 0;
+                        const amt = parseFloat(item.Amount) || 0;
+                        const rate = parseFloat(item.Currency_rate || 1) || 1;
+                        tQty += qty;
+                        tAed += (amt * rate);
+                    });
+                    setTotalQty(tQty);
+                    setTotalAedPrice(tAed);
+
+                    // Fetch last costs for these items
+                    const ids = items.map(o => o.Itemid || o.ItemId).filter(id => id);
+                    if (ids.length > 0) {
+                        fetchLastCosts(ids);
+                    }
                 }
             }
         } catch (error) {
@@ -200,6 +293,7 @@ const CostingManagementSection = () => {
     React.useEffect(() => {
         fetchSupplierDetails();
         fetchSessions();
+        fetchServiceProviders();
     }, []);
 
     React.useEffect(() => {
@@ -219,10 +313,10 @@ const CostingManagementSection = () => {
                 const result = await response.json();
                 if (result.success) {
                     const billList = (result.data || []).map(b => ({
-                        id: b.Id,
-                        billNo: b.Billno,
-                        date: b.Billdate,
-                        amount: b.Totalamount
+                        id: b.Id || b.id,
+                        billNo: b.Billno || b.billno,
+                        date: b.Billdate || b.billdate,
+                        amount: b.Grand_Total || b.Grand_total || b.Totalamount || b.totalamount || 0
                     }));
                     setInvoices(billList);
                 }
@@ -429,83 +523,34 @@ const CostingManagementSection = () => {
                             ))}
                         </TableBody>
                     </Table>
-                </TableContainer>
-
-                <Paper sx={{
-                    mt: 3,
-                    p: { xs: 2, sm: 2.5 },
-                    borderRadius: 3,
-                    display: 'flex',
-                    flexDirection: { xs: 'column', md: 'row' },
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 2,
-                    boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
-                    bgcolor: 'white',
-                    border: '1px solid #f1f5f9',
-                    mx: 3,
-                    mb: 3
-                }}>
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems="center">
-                        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                            Showing <strong>{indexOfFirstItem + 1}</strong> to <strong>{Math.min(indexOfLastItem, filteredCount)}</strong> of <strong>{filteredCount}</strong> sessions
-                        </Typography>
-
-                        {!isMobile && (
-                            <Stack direction="row" spacing={1} alignItems="center">
-                                <Typography variant="body2" color="text.secondary">Rows per page:</Typography>
-                                <TextField
-                                    select
-                                    size="small"
-                                    value={rowsPerPage}
-                                    onChange={handleChangeRowsPerPage}
-                                    sx={{
-                                        '& .MuiOutlinedInput-root': { borderRadius: 2, height: 32 },
-                                        '& .MuiSelect-select': { py: 0.5, fontSize: '0.85rem', minWidth: 40 }
-                                    }}
-                                >
-                                    {[5, 10, 25, 50].map((option) => (
-                                        <MenuItem key={option} value={option}>
-                                            {option}
-                                        </MenuItem>
-                                    ))}
-                                </TextField>
-                            </Stack>
-                        )}
-                    </Stack>
-
-                    <Pagination
-                        count={Math.max(totalPages, 1)}
-                        page={page}
-                        onChange={(e, value) => setPage(value)}
-                        color="primary"
-                        shape="rounded"
-                        size={isMobile ? "small" : "medium"}
-                        showFirstButton
-                        showLastButton
-                        sx={{
-                            '& .MuiPaginationItem-root': {
-                                fontWeight: 700,
-                                borderRadius: 1.5,
-                                '&.Mui-selected': {
-                                    bgcolor: '#cc3d3e',
-                                    color: 'white',
-                                    '&:hover': { bgcolor: '#b91c1c' }
-                                }
-                            }
-                        }}
-                    />
-                </Paper>
+                </TableContainer>                {/* Standardized Pagination Footer */}
+                <DataTableFooter
+                    totalItems={filteredCount}
+                    itemsPerPage={rowsPerPage}
+                    currentPage={page}
+                    onPageChange={(e, value) => setPage(value)}
+                    onRowsPerPageChange={(value) => {
+                        setRowsPerPage(value);
+                        setPage(1);
+                    }}
+                    itemLabel="sessions"
+                    sx={{ mx: 3, mb: 3 }}
+                />
             </Paper>
 
             <Dialog
                 open={isModalOpen}
                 onClose={handleClose}
-                maxWidth="lg"
+                maxWidth="xl"
                 fullWidth
                 fullScreen={isMobile}
                 PaperProps={{
-                    sx: { borderRadius: isMobile ? 0 : '24px', overflow: 'hidden' }
+                    sx: { 
+                        borderRadius: isMobile ? 0 : '24px', 
+                        overflow: 'hidden',
+                        height: isMobile ? '100%' : '90vh',
+                        maxHeight: '900px'
+                    }
                 }}
             >
                 <DialogTitle sx={{
@@ -677,24 +722,121 @@ const CostingManagementSection = () => {
                                                 <Stack
                                                     key={expense.id}
                                                     direction={{ xs: 'column', md: 'row' }}
-                                                    spacing={1.5}
+                                                    spacing={1.2}
                                                     alignItems={{ xs: 'stretch', md: 'center' }}
                                                 >
-                                                    <Box sx={{ flexBasis: { md: '70%' }, maxWidth: { md: '70%' }, flexGrow: 1 }}>
-                                                        <TextField
+                                                    <Box sx={{ flexBasis: { md: '45%' }, maxWidth: { md: '45%' }, flexGrow: 1 }}>
+                                                        <Autocomplete
                                                             fullWidth
-                                                            placeholder="Select Vendor"
-                                                            size="small"
-                                                            value={expense.vendor}
-                                                            onChange={(e) => {
+                                                            options={serviceProviders}
+                                                            getOptionLabel={(option) => typeof option === 'string' ? option : (option.supplierdisplayname || option.Supplierdisplayname || '')}
+                                                            value={serviceProviders.find(sp => (sp.id === expense.vendorId) || (sp.Id === expense.vendorId)) || expense.vendor}
+                                                            freeSolo
+                                                            ListboxProps={{
+                                                                sx: {
+                                                                    '& .MuiAutocomplete-option': {
+                                                                        fontSize: '0.75rem',
+                                                                        padding: '4px 8px',
+                                                                        minHeight: '32px'
+                                                                    }
+                                                                }
+                                                            }}
+                                                            onChange={(event, newValue) => {
                                                                 const newExpenses = [...expenses];
-                                                                newExpenses[index].vendor = e.target.value;
+                                                                if (typeof newValue === 'string') {
+                                                                    newExpenses[index].vendor = newValue;
+                                                                    newExpenses[index].vendorId = null;
+                                                                    newExpenses[index].vendorInvoices = [];
+                                                                } else if (newValue) {
+                                                                    newExpenses[index].vendor = newValue.supplierdisplayname || newValue.Supplierdisplayname;
+                                                                    newExpenses[index].vendorId = newValue.id || newValue.Id;
+                                                                    fetchVendorInvoices(newValue.id || newValue.Id, index);
+                                                                } else {
+                                                                    newExpenses[index].vendor = '';
+                                                                    newExpenses[index].vendorId = null;
+                                                                    newExpenses[index].vendorInvoices = [];
+                                                                }
                                                                 setExpenses(newExpenses);
                                                             }}
-                                                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: '8px' } }}
+                                                            onInputChange={(event, newInputValue) => {
+                                                                if (event && event.type === 'change') {
+                                                                    const newExpenses = [...expenses];
+                                                                    newExpenses[index].vendor = newInputValue;
+                                                                    setExpenses(newExpenses);
+                                                                }
+                                                            }}
+                                                            loading={loadingServiceProviders}
+                                                            renderInput={(params) => (
+                                                                <TextField
+                                                                    {...params}
+                                                                    fullWidth
+                                                                    placeholder="Vendor"
+                                                                    size="small"
+                                                                    InputProps={{
+                                                                        ...params.InputProps,
+                                                                        endAdornment: (
+                                                                            <React.Fragment>
+                                                                                {loadingServiceProviders ? <CircularProgress color="inherit" size={12} /> : null}
+                                                                                {params.InputProps.endAdornment}
+                                                                            </React.Fragment>
+                                                                        ),
+                                                                        sx: { borderRadius: '8px', bgcolor: 'white', fontSize: '0.8rem' }
+                                                                    }}
+                                                                />
+                                                            )}
                                                         />
                                                     </Box>
-                                                    <Box sx={{ flexBasis: { md: '30%' }, maxWidth: { md: '30%' }, display: 'flex', gap: 1, flexGrow: 1 }}>
+                                                    <Box sx={{ flexBasis: { md: '30%' }, maxWidth: { md: '30%' }, flexGrow: 1 }}>
+                                                        <Autocomplete
+                                                            fullWidth
+                                                            size="small"
+                                                            options={expense.vendorInvoices || []}
+                                                            getOptionLabel={(option) => typeof option === 'string' ? option : `${option.Billno || option.billno} (₹${option.Grand_Total || option.Grand_total || 0})`}
+                                                            value={expense.vendorInvoices?.find(inv => (inv.Billno === expense.refNo) || (inv.billno === expense.refNo)) || expense.refNo}
+                                                            freeSolo
+                                                            ListboxProps={{
+                                                                sx: {
+                                                                    '& .MuiAutocomplete-option': {
+                                                                        fontSize: '0.75rem',
+                                                                        padding: '4px 8px',
+                                                                        minHeight: '32px'
+                                                                    }
+                                                                }
+                                                            }}
+                                                            onChange={(event, newValue) => {
+                                                                const newExpenses = [...expenses];
+                                                                if (typeof newValue === 'string') {
+                                                                    newExpenses[index].refNo = newValue;
+                                                                } else if (newValue) {
+                                                                    newExpenses[index].refNo = newValue.Billno || newValue.billno;
+                                                                    newExpenses[index].amount = newValue.Grand_Total || newValue.Grand_total || 0;
+                                                                } else {
+                                                                    newExpenses[index].refNo = '';
+                                                                }
+                                                                setExpenses(newExpenses);
+                                                            }}
+                                                            onInputChange={(event, newInputValue) => {
+                                                                if (event && event.type === 'change') {
+                                                                    const newExpenses = [...expenses];
+                                                                    newExpenses[index].refNo = newInputValue;
+                                                                    setExpenses(newExpenses);
+                                                                }
+                                                            }}
+                                                            renderInput={(params) => (
+                                                                <TextField
+                                                                    {...params}
+                                                                    fullWidth
+                                                                    placeholder="Ref"
+                                                                    size="small"
+                                                                    InputProps={{
+                                                                        ...params.InputProps,
+                                                                        sx: { borderRadius: '8px', bgcolor: 'white', fontSize: '0.8rem' }
+                                                                    }}
+                                                                />
+                                                            )}
+                                                        />
+                                                    </Box>
+                                                    <Box sx={{ flexBasis: { md: '25%' }, maxWidth: { md: '25%' }, display: 'flex', gap: 1, flexGrow: 1 }}>
                                                         <TextField
                                                             placeholder="Amt"
                                                             size="small"
@@ -704,18 +846,11 @@ const CostingManagementSection = () => {
                                                                 newExpenses[index].amount = e.target.value;
                                                                 setExpenses(newExpenses);
                                                             }}
-                                                            sx={{ flexGrow: 1, minWidth: 0, '& .MuiOutlinedInput-root': { borderRadius: '8px' } }}
-                                                        />
-                                                        <TextField
-                                                            placeholder="Ref"
-                                                            size="small"
-                                                            value={expense.refNo}
-                                                            onChange={(e) => {
-                                                                const newExpenses = [...expenses];
-                                                                newExpenses[index].refNo = e.target.value;
-                                                                setExpenses(newExpenses);
+                                                            sx={{ 
+                                                                flexGrow: 1, 
+                                                                minWidth: 0, 
+                                                                '& .MuiOutlinedInput-root': { borderRadius: '8px', fontSize: '0.8rem' } 
                                                             }}
-                                                            sx={{ flexGrow: 1.2, minWidth: 0, '& .MuiOutlinedInput-root': { borderRadius: '8px' } }}
                                                         />
                                                         <IconButton
                                                             onClick={() => removeExpenseRow(expense.id)}
@@ -724,7 +859,7 @@ const CostingManagementSection = () => {
                                                                 color: expenses.length === 1 ? '#cbd5e1' : '#ef4444',
                                                                 bgcolor: alpha('#ef4444', 0.05),
                                                                 borderRadius: '8px',
-                                                                p: 1
+                                                                p: 0.8
                                                             }}
                                                         >
                                                             <DeleteOutlineIcon fontSize="small" />
@@ -750,13 +885,24 @@ const CostingManagementSection = () => {
                                     <Stack spacing={3}>
                                         <Box sx={{ p: 2, borderRadius: '16px', bgcolor: '#3b82f6', color: 'white' }}>
                                             <Typography variant="caption" sx={{ opacity: 0.8, fontWeight: 700, display: 'block' }}>ESTIMATED TOTAL</Typography>
-                                            <Typography variant="h5" fontWeight={900}>₹46,420.00</Typography>
+                                            <Typography variant="h5" fontWeight={900}>
+                                                ₹{((selectedInvoice ? parseFloat(selectedInvoice.amount || 0) : 0) + 
+                                                   expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </Typography>
                                         </Box>
 
                                         <Stack spacing={2}>
                                             {[
-                                                { label: 'Base Cost', value: '45,220', icon: '₹' },
-                                                { label: 'Expenses', value: '1,200', icon: '₹' },
+                                                { 
+                                                    label: 'Base Cost', 
+                                                    value: (selectedInvoice ? parseFloat(selectedInvoice.amount || 0) : 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), 
+                                                    icon: '₹' 
+                                                },
+                                                { 
+                                                    label: 'Expenses', 
+                                                    value: expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), 
+                                                    icon: '₹' 
+                                                },
                                                 { label: 'Exchange Rate', value: '3.67', icon: 'AED' },
                                             ].map((item) => (
                                                 <Box key={item.label} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -793,48 +939,111 @@ const CostingManagementSection = () => {
                                 </Stack>
                             </Stack>
                             <TableContainer sx={{ borderRadius: '16px', border: '1px solid #e2e8f0', bgcolor: 'white' }}>
-                                <Table size="small" sx={{ minWidth: { xs: 800, md: '100%' } }}>
-                                    <TableHead sx={{ bgcolor: '#0f172a' }}>
+                                <Table sx={{ minWidth: 1200 }}>
+                                    <TableHead sx={{ bgcolor: alpha('#1e293b', 0.9) }}>
                                         <TableRow>
-                                            {['Product', 'Qty', 'Unit Price', 'Landed', 'D-ESP', 'G-ESP', 'S-ESP'].map((h) => (
-                                                <TableCell key={h} sx={{ color: 'white', fontWeight: 800, fontSize: '0.75rem', py: 2, whiteSpace: 'nowrap' }}>{h}</TableCell>
+                                            {['Product', 'Qty', 'Unit Price', 'AED Price', 'Cost', 'Totalcost', 'Diamond Margin(%)', 'Diamond MSP', 'Gold Margin(%)', 'Gold MSP', 'Silver Margin(%)', 'Silver MSP'].map((h, i) => (
+                                                <TableCell key={h} sx={{ 
+                                                    color: 'white', 
+                                                    fontWeight: 800, 
+                                                    fontSize: '0.65rem',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.05em',
+                                                    py: 1.5
+                                                }}>
+                                                    {h}
+                                                </TableCell>
                                             ))}
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
-                                        {billItems.length === 0 ? (
-                                            <TableRow>
-                                                <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
-                                                    <Stack alignItems="center" spacing={1}>
-                                                        <Avatar sx={{ bgcolor: '#f1f5f9' }}><CalculateIcon sx={{ color: '#94a3b8' }} /></Avatar>
-                                                        <Typography variant="body2" fontWeight={700} color="#94a3b8">Ready to calculate margins after invoice selection</Typography>
-                                                    </Stack>
-                                                </TableCell>
-                                            </TableRow>
-                                        ) : billItems.map((item, idx) => {
+                                        {billItems.map((item, idx) => {
                                             const totalExpenses = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-                                            const totalQty = billItems.reduce((sum, b) => sum + (parseFloat(b.Qty) || 0), 0);
-                                            const expensePerUnit = totalQty > 0 ? totalExpenses / totalQty : 0;
+                                            const currentTotalQty = billItems.reduce((sum, b) => sum + (parseFloat(b.Qty) || 0), 0);
+                                            const expensePerUnit = currentTotalQty > 0 ? totalExpenses / currentTotalQty : 0;
 
-                                            const unitPriceINR = (parseFloat(item.Amount) || 0);
-                                            const landedCost = unitPriceINR + expensePerUnit;
+                                            const qtyNum = parseFloat(item.Qty || 0);
+                                            const unitPriceINR = parseFloat(item.Amount || 0);
+                                            const aedPrice = unitPriceINR * exchangeRate;
+                                            const totalCostVal = expensePerUnit * qtyNum;
+                                            
+                                            const lastCost = lastCosts[item.Itemid || item.ItemId];
 
-                                            const diamondESP = landedCost / (1 - (marginStrategy.diamond / 100));
-                                            const goldESP = landedCost / (1 - (marginStrategy.gold / 100));
-                                            const silverESP = landedCost / (1 - (marginStrategy.silver / 100));
+                                            const dMSP = (aedPrice + expensePerUnit) * (1 + (parseFloat(item.marginD || 0) / 100));
+                                            const gMSP = (aedPrice + expensePerUnit) * (1 + (parseFloat(item.marginG || 0) / 100));
+                                            const sMSP = (aedPrice + expensePerUnit) * (1 + (parseFloat(item.marginS || 0) / 100));
 
                                             return (
                                                 <TableRow key={idx}>
-                                                    <TableCell sx={{ fontWeight: 800 }}>{item.Description || 'Item'}</TableCell>
-                                                    <TableCell>{item.Qty}</TableCell>
-                                                    <TableCell>₹{unitPriceINR.toFixed(2)}</TableCell>
-                                                    <TableCell sx={{ fontWeight: 900, color: '#3b82f6' }}>₹{landedCost.toFixed(2)}</TableCell>
-                                                    <TableCell sx={{ fontWeight: 800 }}>₹{diamondESP.toFixed(2)}</TableCell>
-                                                    <TableCell sx={{ fontWeight: 800 }}>₹{goldESP.toFixed(2)}</TableCell>
-                                                    <TableCell sx={{ fontWeight: 800 }}>₹{silverESP.toFixed(2)}</TableCell>
+                                                    <TableCell sx={{ minWidth: 200 }}>
+                                                        <Stack direction="row" spacing={1} alignItems="center">
+                                                            <Box>
+                                                                <Typography variant="caption" fontWeight={800} display="block" color="#1e293b">{item.Description || item.Itemname || 'Item'}</Typography>
+                                                                <Typography variant="caption" sx={{ fontSize: '0.6rem', color: '#64748b' }}>{item.allvalues}</Typography>
+                                                            </Box>
+                                                            {lastCost && <HistoryIcon sx={{ fontSize: 14, color: '#3b82f6' }} />}
+                                                        </Stack>
+                                                    </TableCell>
+                                                    <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{qtyNum}</TableCell>
+                                                    <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{unitPriceINR.toFixed(2)}</TableCell>
+                                                    <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{aedPrice.toFixed(2)}</TableCell>
+                                                    <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{expensePerUnit.toFixed(2)}</TableCell>
+                                                    <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{totalCostVal.toLocaleString()}</TableCell>
+                                                    
+                                                    {/* Diamond */}
+                                                    <TableCell sx={{ width: 80 }}>
+                                                        <input 
+                                                            type="text" 
+                                                            value={item.marginD} 
+                                                            onChange={(e) => {
+                                                                const newItems = [...billItems];
+                                                                newItems[idx].marginD = e.target.value;
+                                                                setBillItems(newItems);
+                                                            }}
+                                                            style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: '4px', textAlign: 'right', padding: '4px' }} 
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell sx={{ bgcolor: '#D4E9FF', fontSize: '0.75rem', fontWeight: 900, textAlign: 'right' }}>{dMSP.toFixed(2)}</TableCell>
+                                                    
+                                                    {/* Gold */}
+                                                    <TableCell sx={{ width: 80 }}>
+                                                        <input 
+                                                            type="text" 
+                                                            value={item.marginG} 
+                                                            onChange={(e) => {
+                                                                const newItems = [...billItems];
+                                                                newItems[idx].marginG = e.target.value;
+                                                                setBillItems(newItems);
+                                                            }}
+                                                            style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: '4px', textAlign: 'right', padding: '4px' }} 
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell sx={{ bgcolor: '#FFD666', fontSize: '0.75rem', fontWeight: 900, textAlign: 'right' }}>{gMSP.toFixed(2)}</TableCell>
+                                                    
+                                                    {/* Silver */}
+                                                    <TableCell sx={{ width: 80 }}>
+                                                        <input 
+                                                            type="text" 
+                                                            value={item.marginS} 
+                                                            onChange={(e) => {
+                                                                const newItems = [...billItems];
+                                                                newItems[idx].marginS = e.target.value;
+                                                                setBillItems(newItems);
+                                                            }}
+                                                            style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: '4px', textAlign: 'right', padding: '4px' }} 
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell sx={{ bgcolor: '#5F6C79', color: 'white', fontSize: '0.75rem', fontWeight: 900, textAlign: 'right' }}>{sMSP.toFixed(2)}</TableCell>
                                                 </TableRow>
                                             );
                                         })}
+                                        <TableRow sx={{ bgcolor: alpha('#1e293b', 0.05) }}>
+                                            <TableCell sx={{ fontWeight: 900, color: '#1e293b', py: 1.5 }}>TOTAL</TableCell>
+                                            <TableCell sx={{ fontWeight: 900, color: '#1e293b' }}>{billItems.reduce((sum, i) => sum + (parseFloat(i.Qty) || 0), 0).toLocaleString()}</TableCell>
+                                            <TableCell />
+                                            <TableCell sx={{ fontWeight: 900, color: '#3b82f6' }}>{totalAedPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                                            <TableCell colSpan={8} />
+                                        </TableRow>
                                     </TableBody>
                                 </Table>
                             </TableContainer>
@@ -914,24 +1123,34 @@ const CostingManagementSection = () => {
 
                                         const payload = {
                                             SupplierId: selectedSupplier.id || selectedSupplier.Id,
-                                            BillId: selectedInvoice.id || selectedInvoice.Id,
-                                            TotalBaseCost: billItems.reduce((sum, b) => sum + ((parseFloat(b.Amount) || 0) * (parseFloat(b.Qty) || 0)), 0),
-                                            TotalExpenses: totalExpenses,
-                                            ExchangeRate: 3.67,
-                                            UserId: localStorage.getItem('Userid'),
-                                            CatalogId: localStorage.getItem('Catelogid'),
-                                            Items: billItems.map(item => {
+                                            Purchaseid: selectedInvoice.id || selectedInvoice.Id,
+                                            CargoCost: 0, // Placeholder
+                                            ExpenseCost: expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+                                            TotalCost: billItems.reduce((sum, b) => sum + ((parseFloat(b.Amount) || 0) * (parseFloat(b.Qty) || 0)), 0) + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+                                            Exchangerate: 3.67,
+                                            UserId: localStorage.getItem('Userid') || "1",
+                                            Invoices: expenses.filter(e => e.vendor && e.amount).map(e => ({
+                                                VendorId: e.vendorId || 0,
+                                                InvoiceId: e.refNo || "",
+                                                Amount: parseFloat(e.amount) || 0
+                                            })),
+                                            MarginItems: billItems.map(item => {
                                                 const unitPrice = parseFloat(item.Amount) || 0;
                                                 const landedCost = unitPrice + expensePerUnit;
                                                 return {
-                                                    VariantId: item.Itemid,
-                                                    ProductId: 0,
+                                                    ItemId: item.Itemid,
+                                                    ItemName: item.Itemname || item.Description,
                                                     Qty: parseFloat(item.Qty) || 0,
-                                                    UnitCost: unitPrice,
-                                                    LandedCost: landedCost,
-                                                    DiamondESP: landedCost / (1 - (marginStrategy.diamond / 100)),
-                                                    GoldESP: landedCost / (1 - (marginStrategy.gold / 100)),
-                                                    SilverESP: landedCost / (1 - (marginStrategy.silver / 100))
+                                                    UnitPrice: unitPrice,
+                                                    AedPrice: unitPrice, // Assuming unit price is in AED or base currency
+                                                    Cost: landedCost,
+                                                    Totalcost: landedCost * (parseFloat(item.Qty) || 0),
+                                                    Diamondmargin: marginStrategy.diamond,
+                                                    Diamondmsp: landedCost / (1 - (marginStrategy.diamond / 100)),
+                                                    Goldmargin: marginStrategy.gold,
+                                                    Goldmsp: landedCost / (1 - (marginStrategy.gold / 100)),
+                                                    Silvermargin: marginStrategy.silver,
+                                                    Silvermsp: landedCost / (1 - (marginStrategy.silver / 100))
                                                 };
                                             })
                                         };

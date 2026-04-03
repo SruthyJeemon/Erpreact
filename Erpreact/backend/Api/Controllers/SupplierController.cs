@@ -77,7 +77,7 @@ namespace Api.Controllers
         }
 
         // GET: api/supplier/{id}
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public IActionResult GetSupplierById(int id)
         {
             try
@@ -470,6 +470,48 @@ namespace Api.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("service-providers")]
+        public IActionResult GetServiceProviders()
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                List<Dictionary<string, object>> suppliers = new List<Dictionary<string, object>>();
+
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+                    string sql = @"SELECT Id, Supplierdisplayname, Typeofsupplier, Currency 
+                                 FROM Tbl_Supplier 
+                                 WHERE (Isdelete = 0 OR Isdelete IS NULL) 
+                                 AND (Status = 'Active' OR Status IS NULL OR Status = '') 
+                                 AND Typeofsupplier LIKE '%ServiceProvider%'";
+                    
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        using (SqlDataReader reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                Dictionary<string, object> supplier = new Dictionary<string, object>();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    supplier[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                }
+                                suppliers.Add(supplier);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new { success = true, data = suppliers });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = ex.Message });
             }
         }
     }

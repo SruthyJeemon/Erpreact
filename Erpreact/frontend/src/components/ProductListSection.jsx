@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -185,20 +186,37 @@ const ProductListSection = () => {
         setFormData(p => ({ ...p, specifications: ns }));
     };
 
-    const getApprovedStatusDisplay = (status) => {
+    const getApprovedStatusDisplay = (val) => {
+        // Handle potential object wrapping or multiple property names
+        let status = 0;
+        if (typeof val === 'object' && val !== null) {
+            status = val.Approved_Status ?? val.approved_status ?? val.approved_Status ?? val.ApprovedStatus ?? val.approvedStatus ?? 0;
+        } else {
+            status = val;
+        }
+
         const s = Number(status);
-        let color = '#64748b';
+        let color = '#64748b'; // Default Pending Grey
         let bgcolor = '#f1f5f9';
         let text = 'Pending';
 
-        if (s === 1) { color = '#16a34a'; bgcolor = '#f0fdf4'; text = 'Approved'; }
-        else if (s === 2) { color = '#dc2626'; bgcolor = '#fef2f2'; text = 'Rejected'; }
+        if (s === 1 || String(status).trim() === "1" || String(status).toLowerCase() === "approved") {
+            color = '#ffffff'; // White text
+            bgcolor = '#2563eb'; // Solid Blue
+            text = 'Approved';
+        } else if (s === 2 || String(status).trim() === "2" || String(status).toLowerCase() === "rejected") {
+            color = '#ffffff'; // White text
+            bgcolor = '#dc2626'; // Solid Red
+            text = 'Rejected';
+        }
 
         return (
             <Box sx={{
                 px: 1.2, py: 0.4, borderRadius: 1.5, fontSize: '0.7rem', fontWeight: 800,
                 textTransform: 'uppercase', bgcolor, color, border: '1px solid', borderColor: 'currentColor',
-                display: 'inline-block'
+                display: 'inline-block',
+                minWidth: '80px',
+                textAlign: 'center'
             }}>
                 {text}
             </Box>
@@ -492,7 +510,7 @@ const ProductListSection = () => {
                                         <TableCell sx={{ fontWeight: 600 }}>{p.product_name || p.Product_name}</TableCell>
                                         <TableCell>{p.brand_name || 'N/A'}</TableCell>
                                         <TableCell sx={{ fontSize: '0.8rem', maxWidth: 200, color: '#64748b' }}>{getFullCategoryPath(p.category_id)}</TableCell>
-                                        <TableCell align="center">{getApprovedStatusDisplay(p.Approved_Status)}</TableCell>
+                                        <TableCell align="center">{getApprovedStatusDisplay(p)}</TableCell>
                                         <TableCell align="center">
                                             <Box sx={{
                                                 display: 'inline-block', px: 1, py: 0.25, borderRadius: 1, fontSize: '0.7rem', fontWeight: 700, border: '1px solid',
@@ -628,7 +646,7 @@ const ProductListSection = () => {
 
                                             <Stack direction="row" justifyContent="space-between" alignItems="center">
                                                 <Stack direction="row" spacing={1} alignItems="center">
-                                                    {getApprovedStatusDisplay(p.Approved_Status)}
+                                                    {getApprovedStatusDisplay(p)}
                                                     <Box sx={{
                                                         px: 1.5, py: 0.5, borderRadius: '8px', fontSize: '0.65rem', fontWeight: 800, border: '1px solid',
                                                         bgcolor: (p.product_Status || 'Active').toLowerCase() === 'active' ? '#ecfdf5' : '#fff7ed',
@@ -669,14 +687,20 @@ const ProductListSection = () => {
                 </Box>
             )}
 
-            {/* Pagination */}
+            {/* Standardized Pagination Footer */}
             {!loading && totalCount > 0 && (
-                <Box sx={{ mt: 3, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
-                    <Typography variant="body2" color="textSecondary">
-                        Showing {((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)} of {totalCount}
-                    </Typography>
-                    <Pagination count={Math.ceil(totalCount / itemsPerPage)} page={currentPage} onChange={(e, v) => setCurrentPage(v)} color="primary" shape="rounded" />
-                </Box>
+                <DataTableFooter
+                    totalItems={totalCount}
+                    itemsPerPage={itemsPerPage}
+                    currentPage={currentPage}
+                    onPageChange={(e, value) => setCurrentPage(value)}
+                    onRowsPerPageChange={(value) => {
+                        setItemsPerPage(value);
+                        setCurrentPage(1);
+                    }}
+                    itemLabel="products"
+                    sx={{ mx: 3, mb: 3 }}
+                />
             )}
 
             {/* Redesigned Add Product Dialog */}
@@ -826,8 +850,8 @@ const ProductListSection = () => {
                                             getOptionLabel={(option) => option.fullName || ''}
                                             value={getFlattenedCategories(categories).find(c => String(c.id) === String(formData.category_id)) || null}
                                             onChange={(e, newValue) => handleInputChange('category_id', newValue ? newValue.id : '')}
-                                            renderOption={(props, option) => (
-                                                <Box component="li" {...props} sx={{ 
+                                            renderOption={({ key, ...props }, option) => (
+                                                <Box key={key} component="li" {...props} sx={{ 
                                                     display: 'flex !important', 
                                                     flexDirection: 'column !important', 
                                                     alignItems: 'flex-start !important', 

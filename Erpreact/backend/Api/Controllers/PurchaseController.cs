@@ -961,7 +961,7 @@ namespace Api.Controllers
             }
         }
 
-        [HttpGet("details/{id}")]
+        [HttpGet("bill-details/{id}")]
         public async Task<IActionResult> GetBillDetails(int id)
         {
             try

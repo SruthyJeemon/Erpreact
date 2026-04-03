@@ -1,0 +1,36 @@
+﻿
+
+StatusCode        : 200
+StatusDescription : OK
+Content           : "-- ============================
+                    =================\r\n-- 
+                    Author:\t\t<Author,,Name>\r\n-- 
+                    Create date: <Create 
+                    Date,,>\r\n-- Description:\t<Des
+                    cription,,>\r\n-- ==============
+                    ===========================...
+RawContent        : HTTP/1.1 200 OK
+                    Transfer-Encoding: chunked
+                    Content-Type: application/json; 
+                    charset=utf-8
+                    Date: Fri, 03 Apr 2026 07:39:08 
+                    GMT
+                    Server: Kestrel
+                    
+                    "-- ============================
+                    =================\r\...
+Forms             : {}
+Headers           : {[Transfer-Encoding, chunked], 
+                    [Content-Type, 
+                    application/json; 
+                    charset=utf-8], [Date, Fri, 03 
+                    Apr 2026 07:39:08 GMT], 
+                    [Server, Kestrel]}
+Images            : {}
+InputFields       : {}
+Links             : {}
+ParsedHtml        : mshtml.HTMLDocumentClass
+RawContentLength  : 6615
+
+
+

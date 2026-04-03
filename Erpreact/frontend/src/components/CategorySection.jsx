@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import {
     Box,
     Typography,
@@ -478,20 +479,19 @@ const CategorySection = () => {
                 </Table>
             </TableContainer>
 
-            {/* Pagination */}
+            {/* Standardized Pagination Footer */}
             {!loading && totalCount > 0 && (
-                <Box sx={{ mt: 3, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
-                    <Typography variant="body2" color="textSecondary">
-                        Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, totalCount)} of {totalCount} entries
-                    </Typography>
-                    <Pagination
-                        count={totalPages}
-                        page={currentPage}
-                        onChange={(e, v) => setCurrentPage(v)}
-                        color="primary"
-                        shape="rounded"
-                    />
-                </Box>
+                <DataTableFooter
+                    totalItems={totalCount}
+                    itemsPerPage={itemsPerPage}
+                    currentPage={currentPage}
+                    onPageChange={(e, value) => setCurrentPage(value)}
+                    onRowsPerPageChange={(value) => {
+                        setItemsPerPage(value);
+                        setCurrentPage(1);
+                    }}
+                    itemLabel="categories"
+                />
             )}
 
             {/* Modal */}

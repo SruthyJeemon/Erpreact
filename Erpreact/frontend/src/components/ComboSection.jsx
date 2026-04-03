@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import {
     Box,
     Typography,
@@ -817,18 +818,21 @@ const ComboSection = () => {
                         </TableBody>
                     </Table>
                 </TableContainer>
-                <TablePagination
-                    rowsPerPageOptions={[5, 10, 25, 50]}
-                    component="div"
-                    count={totalRecords}
-                    rowsPerPage={rowsPerPage}
-                    page={page}
-                    onPageChange={(e, newPage) => setPage(newPage)}
-                    onRowsPerPageChange={(e) => {
-                        setRowsPerPage(parseInt(e.target.value, 10));
-                        setPage(0);
-                    }}
-                />
+                {/* Standardized Pagination Footer */}
+                {!loading && totalRecords > 0 && (
+                    <DataTableFooter
+                        totalItems={totalRecords}
+                        itemsPerPage={rowsPerPage}
+                        currentPage={page + 1}
+                        onPageChange={(e, value) => setPage(value - 1)}
+                        onRowsPerPageChange={(value) => {
+                            setRowsPerPage(value);
+                            setPage(0);
+                        }}
+                        itemLabel="combos"
+                        sx={{ mt: 0, border: 'none', borderRadius: 0, borderTop: '1px solid #e2e8f0' }}
+                    />
+                )}
             </Paper >
 
             {/* Create Combo Modal */}

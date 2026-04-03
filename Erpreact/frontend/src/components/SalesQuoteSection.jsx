@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import dayjs from 'dayjs';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 
@@ -392,82 +393,19 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                     </Table>
                 </TableContainer>
 
-                {/* ── DataTable Footer ── */}
+                {/* Standardized Pagination Footer */}
                 {!loading && filteredQuotes.length > 0 && (
-                    <Paper sx={{
-                        mt: 3, px: 3, py: 2,
-                        borderRadius: 3,
-                        display: 'flex',
-                        flexDirection: { xs: 'column', md: 'row' },
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 2,
-                        bgcolor: 'white',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: 'none'
-                    }}>
-                        {/* Left: Showing info + rows per page */}
-                        <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap">
-                            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                                Showing <strong>{filteredQuotes.length === 0 ? 0 : startIndex + 1}</strong> to{' '}
-                                <strong>{endIndex}</strong> of{' '}
-                                <strong>{filteredQuotes.length}</strong> {filterLabel}
-                                {searchTerm && allQuotes.length !== filteredQuotes.length && (
-                                    <span style={{ color: '#94a3b8' }}> (filtered from <strong>{allQuotes.length}</strong> total)</span>
-                                )}
-                            </Typography>
-
-                            <Stack direction="row" spacing={1} alignItems="center">
-                                <Typography variant="body2" color="text.secondary">Rows per page:</Typography>
-                                <TextField
-                                    select size="small" value={itemsPerPage}
-                                    onChange={(e) => { setItemsPerPage(parseInt(e.target.value)); setCurrentPage(1); }}
-                                    sx={{ width: 70, '& .MuiOutlinedInput-root': { borderRadius: 2, height: 32 }, '& .MuiSelect-select': { py: 0.3, fontSize: '0.85rem' } }}
-                                >
-                                    {[5, 10, 25, 50, 100].map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
-                                </TextField>
-                            </Stack>
-                        </Stack>
-
-                        {/* Right: Numbered pagination */}
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                            <IconButton size="small" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}
-                                sx={{ width: 32, height: 32, borderRadius: 1, border: '1px solid #e2e8f0', color: currentPage === 1 ? '#cbd5e1' : '#475569' }}>
-                                <FirstPage fontSize="small" />
-                            </IconButton>
-                            <IconButton size="small" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
-                                sx={{ width: 32, height: 32, borderRadius: 1, border: '1px solid #e2e8f0', color: currentPage === 1 ? '#cbd5e1' : '#475569' }}>
-                                <KeyboardArrowLeft fontSize="small" />
-                            </IconButton>
-
-                            {paginationRange.map((page, idx) =>
-                                page === '...' ? (
-                                    <Typography key={`e-${idx}`} sx={{ px: 1, color: '#94a3b8', fontSize: '0.9rem' }}>...</Typography>
-                                ) : (
-                                    <Button key={page} size="small" onClick={() => setCurrentPage(page)}
-                                        sx={{
-                                            minWidth: 32, height: 32, borderRadius: 1, border: '1px solid',
-                                            borderColor: currentPage === page ? '#cc3d3e' : '#e2e8f0',
-                                            bgcolor: currentPage === page ? '#cc3d3e' : 'white',
-                                            color: currentPage === page ? 'white' : '#475569',
-                                            fontWeight: currentPage === page ? 700 : 500,
-                                            fontSize: '0.85rem', p: 0,
-                                            '&:hover': { bgcolor: currentPage === page ? '#b91c1c' : '#f1f5f9' }
-                                        }}
-                                    >{page}</Button>
-                                )
-                            )}
-
-                            <IconButton size="small" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
-                                sx={{ width: 32, height: 32, borderRadius: 1, border: '1px solid #e2e8f0', color: currentPage === totalPages ? '#cbd5e1' : '#475569' }}>
-                                <KeyboardArrowRight fontSize="small" />
-                            </IconButton>
-                            <IconButton size="small" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}
-                                sx={{ width: 32, height: 32, borderRadius: 1, border: '1px solid #e2e8f0', color: currentPage === totalPages ? '#cbd5e1' : '#475569' }}>
-                                <LastPage fontSize="small" />
-                            </IconButton>
-                        </Stack>
-                    </Paper>
+                    <DataTableFooter
+                        totalItems={filteredQuotes.length}
+                        itemsPerPage={itemsPerPage}
+                        currentPage={currentPage}
+                        onPageChange={(e, value) => setCurrentPage(value)}
+                        onRowsPerPageChange={(value) => {
+                            setItemsPerPage(value);
+                            setCurrentPage(1);
+                        }}
+                        itemLabel={filterLabel}
+                    />
                 )}
             </Paper>
         </Box>

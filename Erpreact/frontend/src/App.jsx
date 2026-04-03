@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
 import LoginForm from './components/LoginForm'
 import Dashboard from './components/Dashboard'
+import Footer from './components/Footer'
 import ErrorBoundary from './components/ErrorBoundary'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
@@ -79,6 +80,7 @@ function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             )}
+            <Footer />
           </div>
         </ErrorBoundary>
       </LocalizationProvider>

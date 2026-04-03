@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import DataTableFooter from './DataTableFooter';
 import {
     Box,
     Typography,
@@ -499,28 +500,19 @@ const BrandSection = () => {
                 </Table>
             </TableContainer>
 
-            {/* Pagination - Responsive Layout */}
+            {/* Standardized Pagination Footer */}
             {!loading && filteredBrands.length > 0 && (
-                <Box sx={{
-                    mt: 3,
-                    display: 'flex',
-                    flexDirection: { xs: 'column', sm: 'row' },
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 2
-                }}>
-                    <Typography variant="body2" sx={{ color: '#64748b' }}>
-                        Showing {indexOfFirstItem + 1}-{Math.min(indexOfLastItem, filteredBrands.length)} of {filteredBrands.length}
-                    </Typography>
-                    <Pagination
-                        count={totalPages}
-                        page={currentPage}
-                        onChange={(e, value) => setCurrentPage(value)}
-                        color="primary"
-                        shape="rounded"
-                        size={window.innerWidth < 600 ? "small" : "medium"}
-                    />
-                </Box>
+                <DataTableFooter
+                    totalItems={filteredBrands.length}
+                    itemsPerPage={itemsPerPage}
+                    currentPage={currentPage}
+                    onPageChange={(e, value) => setCurrentPage(value)}
+                    onRowsPerPageChange={(value) => {
+                        setItemsPerPage(value);
+                        setCurrentPage(1);
+                    }}
+                    itemLabel="brands"
+                />
             )}
 
             {/* Add/Edit Modal */}

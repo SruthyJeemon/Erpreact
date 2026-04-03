@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import {
     Box,
     Typography,
@@ -359,30 +360,21 @@ const StockManagementSection = () => {
                         </Table>
                     </TableContainer>
 
-                    {/* Pagination for Main Table */}
-                    <Box sx={{ 
-                        p: 2, 
-                        display: 'flex', 
-                        flexDirection: { xs: 'column', sm: 'row' },
-                        justifyContent: 'space-between', 
-                        alignItems: 'center', 
-                        gap: 2,
-                        borderTop: '1px solid #f1f5f9'
-                    }}>
-                        <Typography variant="caption" fontWeight={700} color="#64748b">
-                            Showing {Math.min(filteredData.length, (page - 1) * rowsPerPage + 1)} to {Math.min(filteredData.length, page * rowsPerPage)} of {filteredData.length} entries
-                        </Typography>
-                        <Pagination 
-                            count={Math.ceil(filteredData.length / rowsPerPage)} 
-                            page={page} 
-                            onChange={(e, v) => setPage(v)}
-                            color="primary"
-                            size="small"
-                            sx={{
-                                '& .MuiPaginationItem-root': { fontWeight: 700, borderRadius: '8px' }
+                    {/* Standardized Pagination Footer */}
+                    {!loading && filteredData.length > 0 && (
+                        <DataTableFooter
+                            totalItems={filteredData.length}
+                            itemsPerPage={rowsPerPage}
+                            currentPage={page}
+                            onPageChange={(e, v) => setPage(v)}
+                            onRowsPerPageChange={(v) => {
+                                setRowsPerPage(v);
+                                setPage(1);
                             }}
+                            itemLabel="entries"
+                            sx={{ mt: 0, border: 'none', borderRadius: 0, borderTop: '1px solid #f1f5f9' }}
                         />
-                    </Box>
+                    )}
                 </Paper>
 
 

@@ -6190,7 +6190,8 @@ app.MapGet("/api/product", async (int? page, int? pageSize, string? search, stri
                 Userid = reader["Userid"] == DBNull.Value ? null : reader["Userid"].ToString(),
                 CreatorRole = reader["CreatorRole"] == DBNull.Value ? "User" : reader["CreatorRole"].ToString(),
                 CreatorName = reader["CreatorName"] == DBNull.Value ? "Unknown" : reader["CreatorName"].ToString(),
-                Approved_Status = reader["Approved_Status"] == DBNull.Value ? "0" : reader["Approved_Status"].ToString()
+                Approved_Status = reader["Approved_Status"] == DBNull.Value ? "0" : reader["Approved_Status"].ToString(),
+                approved_status = reader["Approved_Status"] == DBNull.Value ? "0" : reader["Approved_Status"].ToString()
             });
         }
         } // End command using block
@@ -6303,25 +6304,35 @@ app.MapPost("/api/product", async (HttpRequest request, SqlConnection connection
             }
         }
         
-        // Generate Sequential Product ID: Count rows and increment
+        // Generate Sequential Product ID: Get Max numeric value and increment
         string productId = "P1";
         try {
-            // Try Tbl_Product first (matching Tbl_Features convention)
-            using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM Tbl_Product", connection)) {
-                int count = (int)await countCmd.ExecuteScalarAsync();
-                productId = "P" + (count + 1);
+            // Try Tbl_Product first
+            string idQuery = "SELECT ISNULL(MAX(CAST(SUBSTRING(Product_id, 2, LEN(Product_id)-1) AS INT)), 0) FROM Tbl_Product WHERE Product_id LIKE 'P%'";
+            using (var maxCmd = new SqlCommand(idQuery, connection)) {
+                int maxId = (int)await maxCmd.ExecuteScalarAsync();
+                productId = "P" + (maxId + 1);
             }
         } catch {
             try {
                 // Fallback to Product
-                using (var countCmd = new SqlCommand("SELECT COUNT(*) FROM Product", connection)) {
-                    int count = (int)await countCmd.ExecuteScalarAsync();
-                    productId = "P" + (count + 1);
+                string idQuery = "SELECT ISNULL(MAX(CAST(SUBSTRING(Product_id, 2, LEN(Product_id)-1) AS INT)), 0) FROM Product WHERE Product_id LIKE 'P%'";
+                using (var maxCmd = new SqlCommand(idQuery, connection)) {
+                    int maxId = (int)await maxCmd.ExecuteScalarAsync();
+                    productId = "P" + (maxId + 1);
                 }
             } catch (Exception ex) {
-                // Fail loudly so we can fix the table name, instead of generating random IDs
                 return Results.Json(new { Success = false, Message = "Product ID Generation Error: " + ex.Message });
             }
+        }
+
+        // Fetch Catelogid from Tbl_Registration
+        string catalogIdValue = "";
+        using (var catCmd = new SqlCommand("SELECT Catelogid FROM Tbl_Registration WHERE Userid = @Userid", connection))
+        {
+            catCmd.Parameters.AddWithValue("@Userid", userid);
+            var result = await catCmd.ExecuteScalarAsync();
+            catalogIdValue = result?.ToString() ?? "";
         }
 
         // 1. Create Main Product record
@@ -6361,7 +6372,7 @@ app.MapPost("/api/product", async (HttpRequest request, SqlConnection connection
             command.Parameters.AddWithValue("@Start_date", DBNull.Value);
             command.Parameters.AddWithValue("@End_date", DBNull.Value);
             command.Parameters.AddWithValue("@Hash_Tags", DBNull.Value);
-            command.Parameters.AddWithValue("@Catelogid", DBNull.Value);
+            command.Parameters.AddWithValue("@Catelogid", string.IsNullOrEmpty(catalogIdValue) ? DBNull.Value : (object)catalogIdValue);
 
             await command.ExecuteNonQueryAsync();
         }
@@ -6450,6 +6461,15 @@ app.MapPut("/api/product/{id}", async (string id, HttpRequest request, SqlConnec
 
         await connection.OpenAsync();
 
+        // Fetch Catelogid from Tbl_Registration
+        string catalogIdValue = "";
+        using (var catCmd = new SqlCommand("SELECT Catelogid FROM Tbl_Registration WHERE Userid = @Userid", connection))
+        {
+            catCmd.Parameters.AddWithValue("@Userid", userid);
+            var result = await catCmd.ExecuteScalarAsync();
+            catalogIdValue = result?.ToString() ?? "";
+        }
+
         // Update Main Product record
         using (var command = new SqlCommand("Product", connection))
         {
@@ -6485,7 +6505,7 @@ app.MapPut("/api/product/{id}", async (string id, HttpRequest request, SqlConnec
             command.Parameters.AddWithValue("@Start_date", DBNull.Value);
             command.Parameters.AddWithValue("@End_date", DBNull.Value);
             command.Parameters.AddWithValue("@Hash_Tags", DBNull.Value);
-            command.Parameters.AddWithValue("@Catelogid", DBNull.Value);
+            command.Parameters.AddWithValue("@Catelogid", string.IsNullOrEmpty(catalogIdValue) ? DBNull.Value : (object)catalogIdValue);
 
             await command.ExecuteNonQueryAsync();
         }
