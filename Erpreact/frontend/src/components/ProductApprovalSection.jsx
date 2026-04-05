@@ -104,11 +104,13 @@ const ProductApprovalSection = ({ onNavigate }) => {
     const fetchPendingProducts = async () => {
         setLoading(true);
         try {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
             const params = new URLSearchParams({
                 status: '0',
                 page: currentPage,
                 pageSize: itemsPerPage,
-                search: searchTerm
+                search: searchTerm,
+                catelogid: user.Catelogid || user.catelogid || ''
             });
             const response = await fetch(`${API_URL}/api/product?${params}`);
             const result = await response.json();

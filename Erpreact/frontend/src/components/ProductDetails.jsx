@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataTableFooter from './DataTableFooter';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useDateFormat } from '../hooks/useDateFormat';
 import Swal from 'sweetalert2';
@@ -49,8 +50,15 @@ import {
     useMediaQuery,
     useTheme,
     Autocomplete,
-    CircularProgress
+    CircularProgress,
+    Grow,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem
 } from '@mui/material';
+import DescriptionIcon from '@mui/icons-material/Description';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
@@ -66,12 +74,13 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import CloseIcon from '@mui/icons-material/Close';
 import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import DescriptionIcon from '@mui/icons-material/Description';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ListIcon from '@mui/icons-material/List';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import './ProductDetails.css';
 
 const ProductDetails = () => {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
     const { productId: paramId } = useParams();
     const location = useLocation();
     const navigate = useNavigate();
@@ -97,6 +106,19 @@ const ProductDetails = () => {
     const [galleryImages, setGalleryImages] = useState([]);
     const [variants, setVariants] = useState([]);
     const [sets, setSets] = useState([]);
+
+    const getFlattenedCategories = (cats, parentId = 0, prefix = '', depth = 0) => {
+        let options = [];
+        if (!cats || !Array.isArray(cats)) return options;
+        cats.filter(cat => Number(cat.parentid ?? cat.Parentid) === Number(parentId))
+            .forEach(cat => {
+                const name = cat.name || cat.Name;
+                const fullName = prefix ? `${prefix} > ${name}` : name;
+                options.push({ id: cat.id || cat.Id, name: name, fullName: fullName, depth: depth });
+                options = [...options, ...getFlattenedCategories(cats, cat.id || cat.Id, fullName, depth + 1)];
+            });
+        return options;
+    };
     const [showSlideshow, setShowSlideshow] = useState(false);
     const [currentImageIndex, setCurrentImageIndex] = useState(0);
     const [pageMessage, setPageMessage] = useState({ text: '', type: '' });
@@ -106,6 +128,14 @@ const ProductDetails = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [entriesPerPage, setEntriesPerPage] = useState(10);
     const [currentPage, setCurrentPage] = useState(1);
+    
+    // Separate Pagination for Tabs
+    const [variantsPage, setVariantsPage] = useState(0);
+    const [variantsRowsPerPage, setVariantsRowsPerPage] = useState(10);
+    const [setsPage, setSetsPage] = useState(0);
+    const [setsRowsPerPage, setSetsRowsPerPage] = useState(10);
+    const [pricingPage, setPricingPage] = useState(0);
+    const [pricingRowsPerPage, setPricingRowsPerPage] = useState(10);
 
     // Edit Modal State
     const [showModal, setShowModal] = useState(false);
@@ -214,6 +244,58 @@ const ProductDetails = () => {
     const [itemSearchTerm, setItemSearchTerm] = useState('');
     const [itemSearchResults, setItemSearchResults] = useState([]);
     const [isSearchingItems, setIsSearchingItems] = useState(false);
+    // Media tab inside Photos & Videos (photo | video)
+    const [mediaTab, setMediaTab] = useState('photo');
+
+    // View Set Modal
+    const [showViewSetModal, setShowViewSetModal] = useState(false);
+    const [selectedSetForView, setSelectedSetForView] = useState(null);
+    const [isEditingSet, setIsEditingSet] = useState(false);
+    const [viewSetTab, setViewSetTab] = useState(0);
+
+    const handleOpenViewSet = (setRow) => {
+        setSelectedSetForView(setRow);
+        setShowViewSetModal(true);
+        setViewSetTab(0);
+    };
+
+    const handleEditFromViewSet = () => {
+        if (!selectedSetForView) return;
+        const s = selectedSetForView;
+        setComboFormData(prev => ({
+            ...prev,
+            setId: s.id ?? s.Id ?? null,
+            setName: s.name ?? s.setName ?? '',
+            modelNo: s.modelNo ?? '',
+            batchNo: s.batchNo ?? '',
+            ean: s.ean ?? '',
+            description: s.description ?? '',
+            shortDescription: s.shortDescription ?? '',
+            wholesalePrice: s.wholesalePrice ?? '',
+            retailPrice: s.retailPrice ?? '',
+            onlinePrice: s.onlinePrice ?? '',
+            length: s.length ?? 0,
+            width: s.width ?? 0,
+            height: s.height ?? 0,
+            weight: s.weight ?? 0,
+            hsCode: s.hsCode ?? '',
+            countryOfOrigin: s.countryOfOrigin ?? '',
+            marketPlaces: s.marketPlaces ?? prev.marketPlaces,
+            items: Array.isArray(s.itemsList) ? s.itemsList : (Array.isArray(s.items) ? s.items : prev.items),
+            imageFiles: s.imageFiles ?? prev.imageFiles,
+            videoFiles: s.videoFiles ?? prev.videoFiles
+        }));
+        setIsEditingSet(true);
+        setShowViewSetModal(false);
+        setShowAddSetModal(true);
+        setComboTab(0);
+    };
+
+    const handleDeleteSet = (setId) => {
+        // Optimistic local delete; integrate API call if available
+        setSets(prev => prev.filter(s => (s.id ?? s.Id) !== setId));
+        setShowViewSetModal(false);
+    };
 
     const paginate = (items) => {
         const indexOfLastEntry = currentPage * entriesPerPage;
@@ -345,28 +427,41 @@ const ProductDetails = () => {
             }
         }
 
-        // 3. Map Images: Prioritize variant-specific images, fallback to gallery only if needed
-        const getStrPath = (item) => {
-            if (!item) return '';
-            if (typeof item === 'string') return item;
-            return item.url || item.path || item.Path || item.gallery_file || item.Gallery_file || '';
-        };
-
-        let variantImages = variant.images || variant.Images || variant.galleryimages || variant.GalleryImages || variant.Image || variant.gallery_file || variant.Gallery_file;
+        // 3. Map Images & Videos: Filter from global galleryImages state
+        const currentVariantId = variant.id || variant.Id;
+        const matchingGalleryItems = galleryImages.filter(img => 
+            img.variantId?.toString() === currentVariantId?.toString()
+        );
 
         let mappedImages = [];
-        if (variantImages) {
-            const imagesArr = Array.isArray(variantImages) ? variantImages : [variantImages];
-            mappedImages = imagesArr.map((img, index) => {
-                const pathStr = getStrPath(img);
+        if (matchingGalleryItems.length > 0) {
+            mappedImages = matchingGalleryItems.map((img, index) => {
+                const pathStr = img.path;
                 return {
-                    id: `existing-${index}-${Date.now()}`,
+                    id: img.id || `existing-${index}-${Date.now()}`,
                     file: null,
                     preview: getImageUrl(pathStr, 'Resize'),
-                    type: 'image',
-                    name: pathStr.toString().split('/').pop() || `Image ${index + 1}`
+                    type: img.type || (pathStr.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) ? 'video' : 'image'),
+                    name: pathStr.toString().split('/').pop() || (img.type === 'video' ? `Video ${index + 1}` : `Image ${index + 1}`)
                 };
             });
+        } else {
+            // Fallback to variant's own fields if state isn't populated
+            let variantMedia = variant.images || variant.Images || variant.galleryimages || variant.GalleryImages || variant.Image || variant.gallery_file || variant.Gallery_file;
+            if (variantMedia) {
+                const mediaArr = Array.isArray(variantMedia) ? variantMedia : [variantMedia];
+                mappedImages = mediaArr.map((item, index) => {
+                    const pathStr = typeof item === 'string' ? item : (item.url || item.path || item.Path || item.gallery_file || item.Gallery_file || '');
+                    const isVideo = pathStr.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/);
+                    return {
+                        id: `existing-${index}-${Date.now()}`,
+                        file: null,
+                        preview: getImageUrl(pathStr, 'Resize'),
+                        type: isVideo ? 'video' : 'image',
+                        name: pathStr.toString().split('/').pop() || (isVideo ? `Video ${index + 1}` : `Image ${index + 1}`)
+                    };
+                });
+            }
         }
         // Fallback to general gallery removed to ensure variant isolation as requested
 
@@ -699,11 +794,67 @@ const ProductDetails = () => {
         }));
     };
 
-    const handleDeleteFile = (fileId) => {
+    const handleDeleteFile = async (fileId) => {
+        // If it's an existing file from the database (represented by a numeric ID in our mapping)
+        const isExisting = !isNaN(fileId) && typeof fileId !== 'object';
+        
+        if (isExisting) {
+            const result = await Swal.fire({
+                title: 'Are you sure?',
+                text: "You won't be able to revert this gallery deletion!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#94a3b8',
+                confirmButtonText: 'Yes, delete it!',
+                borderRadius: '16px'
+            });
+
+            if (!result.isConfirmed) return;
+
+            try {
+                const response = await fetch(`${API_URL}/api/product/gallery/${fileId}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                if (!data.success && !data.Success) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Deletion Failed',
+                        text: data.message || data.Message
+                    });
+                    return;
+                }
+
+                // Success notification
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted!',
+                    text: 'The gallery item has been removed.',
+                    timer: 1500,
+                    showConfirmButton: false,
+                    borderRadius: '16px'
+                });
+
+                // Also update global gallery state so it vanishes everywhere
+                setGalleryImages(prev => prev.filter(img => img.id !== fileId));
+            } catch (err) {
+                console.error("Failed to delete gallery item:", err);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Oops...',
+                    text: 'Something went wrong with the connection!'
+                });
+                return;
+            }
+        }
+
         setVariantFormData(prev => {
             const fileToDelete = prev.uploadedFiles.find(f => f.id === fileId);
             if (fileToDelete) {
-                URL.revokeObjectURL(fileToDelete.preview);
+                if (fileToDelete.preview && fileToDelete.preview.startsWith('blob:')) {
+                    URL.revokeObjectURL(fileToDelete.preview);
+                }
             }
             return {
                 ...prev,
@@ -732,7 +883,7 @@ const ProductDetails = () => {
             // Prepare JSON data structure
             const jsonData = {
                 formData: {
-                    Id: isUpdate ? variantFormData.variantId : '0', // Include Id for update
+                    id: isUpdate ? variantFormData.variantId : '0', // Include id for update
                     userid: userId,
                     productid: productId || '0', // Use existing ProductID from URL/State
                     productname: variantFormData.itemName,
@@ -784,12 +935,14 @@ const ProductDetails = () => {
                 })),
                 openingQtyData: (variantFormData.openingStock || []).map(os => ({
                     Warehouseid: os.warehouse,
-                    Qty: os.qty,
+                    Qty: os.qty || 0,
                     Asofdate: os.date,
-                    Value: os.value
+                    Value: os.value || 0
                 })),
                 serialNumbers: [] // Will be populated if serialized
             };
+
+            console.log("Saving Variant Data:", jsonData);
 
             // Add JSON data to FormData
             formData.append('jsonData', JSON.stringify(jsonData));
@@ -825,13 +978,11 @@ const ProductDetails = () => {
                 videoCount: videoFiles.length
             });
 
-            // Send to API
-            const url = isUpdate
-                ? `${API_URL}/api/productvariant/${variantFormData.variantId}`
-                : `${API_URL}/api/productvariant`;
+            // Send to the newly implemented backend endpoint
+            const url = `${API_URL}/api/product/editvariantitem`;
 
             const response = await fetch(url, {
-                method: isUpdate ? 'PUT' : 'POST',
+                method: 'POST',
                 body: formData
             });
 
@@ -846,6 +997,7 @@ const ProductDetails = () => {
 
             if (result.success || result.Success) {
                 console.log('Success: Product variant saved.');
+                Swal.fire('Success', result.message || `Product variant ${isUpdate ? 'updated' : 'saved'} successfully!`, 'success');
                 setPageMessage({ text: `✓ Product variant ${isUpdate ? 'updated' : 'saved'} successfully!`, type: 'success' });
                 handleCloseAddVariant();
                 // Refresh data without full reload
@@ -1051,14 +1203,24 @@ const ProductDetails = () => {
                     }
 
                     if (Array.isArray(galleryData)) {
-                        setGalleryImages(galleryData.map(item => ({
-                            path: item.Gallery_file || item.gallery_file || item.path || item.Path || item.ImgPath || item.imgpath || item.GalleryFile || item.galleryfile,
-                            variantId: item.Productvariants_id || item.productvariants_id || item.Productvariantsid || item.productvariantsid ||
-                                item.ProductvariantsId || item.ProductVariants_Id || item.product_variants_id ||
-                                item.itemid || item.Itemid || item.ItemId || item.variantid || item.Variant_id || item.variant_id ||
-                                item.Productvariantid || item.productvariantid ||
-                                item.Product_variants_id || item.Product_Variants_Id || item.VariantId
-                        })));
+                        setGalleryImages(galleryData.map(item => {
+                            const path = item.Gallery_file || item.gallery_file || item.path || item.Path || item.ImgPath || item.imgpath || item.GalleryFile || item.galleryfile || '';
+                            const fileId = item.File_id || item.file_id || item.FileId || item.fileid;
+                            // Backend convention: 3 is image/gallery, 2 is video
+                            const type = (fileId == 2) ? 'video' : 'image';
+                            
+                            return {
+                                id: item.id || item.Id,
+                                path,
+                                type,
+                                fileId,
+                                variantId: (item.Productvariants_id || item.productvariants_id || item.Productvariantsid || item.productvariantsid ||
+                                    item.ProductvariantsId || item.ProductVariants_Id || item.product_variants_id ||
+                                    item.itemid || item.Itemid || item.ItemId || item.variantid || item.Variant_id || item.variant_id ||
+                                    item.Productvariantid || item.productvariantid ||
+                                    item.Product_variants_id || item.Product_Variants_Id || item.VariantId)?.toString()
+                            };
+                        }));
                     }
 
                     const variantsRes = await fetch(`${API_URL}/api/product/variants/${productId}`);
@@ -1091,7 +1253,13 @@ const ProductDetails = () => {
     const fetchAllProducts = async (searchTerm = '') => {
         try {
             const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
-            let url = `${API_URL}/api/product?userid=ADMIN`;
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            // If catelogid is provided, we use the actual userid to ensure the backend filters by catalog.
+            // If we use 'ADMIN', the backend ignores the catalog filter.
+            const catelogid = user.Catelogid || user.catelogid || '';
+            const userId = user.userid || ''; 
+
+            let url = `${API_URL}/api/product?userid=${userId}&catelogid=${catelogid}`;
 
             if (searchTerm) {
                 // If searching, increase page size to find relevant items and add search param
@@ -2096,43 +2264,42 @@ const ProductDetails = () => {
                         </Box>
 
 
-                        {/* Consolidated Stats Dashboard Card */}
-                        <Paper 
-                            elevation={0}
-                            sx={{ 
-                                mb: 4, 
-                                p: { xs: 2.5, md: 4 }, 
-                                borderRadius: '32px', 
-                                bgcolor: 'rgba(255, 255, 255, 0.7)', 
-                                backdropFilter: 'blur(30px)',
-                                border: '1px solid rgba(255, 255, 255, 0.6)', 
-                                boxShadow: '0 8px 30px rgba(0,0,0,0.04)',
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: 3,
-                                width: '100%',
-                                maxWidth: 'none'
-                            }}
-                        >
+                        {/* Individual Stats Dashboard Cards */}
+                        <Box sx={{ 
+                            display: 'flex', 
+                            flexWrap: 'wrap', 
+                            gap: 3, 
+                            mb: 4,
+                            px: { xs: 1, md: 2 },
+                            width: '100%'
+                        }}>
                             {[
                                 { label: 'Total Variants', value: variants.length, icon: <InventoryIcon />, color: '#2563eb', bg: '#eff6ff' },
                                 { label: 'Total Units', value: variants.reduce((acc, v) => acc + Number(v.totalqty || v.Totalqty || 0), 0).toLocaleString(), icon: <VisibilityIcon />, color: '#ef4444', bg: '#fef2f2' },
                                 { label: 'Marketplaces', value: 4, icon: <AutoAwesomeIcon />, color: '#0ea5e9', bg: '#f0f9ff' },
                                 { label: 'Priority', value: p('priority') || 'Normal', icon: <DescriptionIcon />, color: '#f59e0b', bg: '#fffbeb' }
                             ].map((stat, i) => (
-                                <Box 
-                                    key={i} 
+                                <Paper 
+                                    key={i}
+                                    elevation={0}
                                     sx={{ 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
+                                        p: 3, 
+                                        width: { xs: '100%', sm: 'calc(50% - 12px)', md: '270px' },
+                                        flexGrow: 1,
+                                        borderRadius: '24px', 
+                                        bgcolor: '#ffffff', 
+                                        border: '1px solid #f1f5f9', 
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                        display: 'flex',
+                                        alignItems: 'center',
                                         gap: 2.5,
-                                        flex: { xs: '1 1 100%', sm: 'calc(50% - 12px)', md: '1 1 0' },
-                                        minWidth: { xs: '100%', sm: '200px' },
-                                        p: { xs: 1.5, sm: 0 },
-                                        bgcolor: { xs: '#f8fafc', sm: 'transparent' },
-                                        borderRadius: '16px'
+                                        height: '90px',
+                                        '&:hover': {
+                                            transform: 'translateY(-5px)',
+                                            boxShadow: '0 12px 30px rgba(0,0,0,0.06)',
+                                            borderColor: stat.color + '40'
+                                        }
                                     }}
                                 >
                                     <Box sx={{ 
@@ -2152,37 +2319,33 @@ const ProductDetails = () => {
                                         <Typography variant="h5" fontWeight={900} sx={{ color: '#0f172a', lineHeight: 1 }}>{stat.value}</Typography>
                                         <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 800, textTransform: 'uppercase', mt: 0.5, display: 'block' }}>{stat.label}</Typography>
                                     </Box>
-                                    {i < 3 && !isMobile && <Divider orientation="vertical" flexItem sx={{ ml: 'auto', mr: 2, height: 40, alignSelf: 'center', opacity: 0.4 }} />}
-                                </Box>
+                                </Paper>
                             ))}
-                        </Paper>
+                        </Box>
 
-                        {/* Modern Segmented Tab UI (Fully Responsive) */}
+                        {/* Modern Premium Segmented Tab Navigation */}
                         <Box sx={{ 
-                            mt: 3, 
+                            mt: 5, 
                             mb: 5, 
                             display: 'flex', 
                             justifyContent: 'center',
                             width: '100%',
-                            px: 0
+                            px: { xs: 2, md: 0 }
                         }}>
                             <Box sx={{ 
-                                p: { xs: 0.4, sm: 0.8 }, 
                                 bgcolor: '#ffffff', 
-                                borderRadius: { xs: '12px', sm: '24px' }, 
+                                borderRadius: '24px', 
+                                p: 1,
                                 display: 'flex', 
                                 alignItems: 'center',
-                                gap: { xs: 0.5, sm: 1 },
-                                border: '1px solid #e2e8f0',
-                                boxShadow: '0 4px 15px rgba(0,0,0,0.05), inset 0 2px 4px rgba(0,0,0,0.02)',
-                                width: 'fit-content',
-                                minWidth: '100%',
+                                gap: 0.5,
+                                border: '1px solid #f1f5f9',
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+                                width: { xs: '100%', md: 'auto' },
                                 maxWidth: '100%',
                                 overflowX: 'auto',
                                 scrollbarWidth: 'none',
-                                px: { xs: 1, sm: 1.5 },
                                 '&::-webkit-scrollbar': { display: 'none' },
-                                WebkitOverflowScrolling: 'touch'
                             }}>
                                 {[
                                     { id: 'details', label: 'Overview', icon: <VisibilityIcon /> },
@@ -2195,31 +2358,31 @@ const ProductDetails = () => {
                                     return (
                                         <Button
                                             key={tab.id}
-                                            onClick={() => setActiveTab(tab.id === 'price' ? 'pricing' : tab.id)}
-                                            startIcon={React.cloneElement(tab.icon, { sx: { fontSize: { xs: 16, md: 20 } } })}
+                                            onClick={() => setActiveTab(tab.id)}
+                                            startIcon={React.cloneElement(tab.icon, { sx: { fontSize: 20 } })}
                                             sx={{
-                                                px: { xs: 1.5, sm: 3, md: 5 },
-                                                py: { xs: 1, sm: 1.5, md: 1.8 },
-                                                flex: { xs: 1, sm: 'none' },
-                                                borderRadius: { xs: '8px', sm: '18px' },
+                                                px: { xs: 2.5, md: 4 },
+                                                py: 1.5,
+                                                borderRadius: '18px',
                                                 textTransform: 'none',
-                                                fontWeight: 800,
-                                                fontSize: { xs: '0.75rem', sm: '0.85rem', md: '0.9rem' },
+                                                fontWeight: 700,
+                                                fontSize: '0.9rem',
                                                 whiteSpace: 'nowrap',
                                                 transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                                                 bgcolor: isActive ? '#cf2c2c' : 'transparent',
+                                                background: isActive ? 'linear-gradient(135deg, #cf2c2c 0%, #ff4d4d 100%)' : 'transparent',
                                                 color: isActive ? '#ffffff' : '#64748b',
                                                 boxShadow: isActive ? '0 10px 20px -5px rgba(207, 44, 44, 0.4)' : 'none',
-                                                minWidth: 'auto',
-                                                flexShrink: 0,
+                                                transform: isActive ? 'scale(1.05)' : 'scale(1)',
                                                 '&:hover': {
                                                     bgcolor: isActive ? '#cf2c2c' : '#f8fafc',
+                                                    background: isActive ? 'linear-gradient(135deg, #cf2c2c 0%, #ff4d4d 100%)' : '#f8fafc',
                                                     color: isActive ? '#ffffff' : '#0f172a',
-                                                    transform: isActive ? 'scale(1.02)' : 'none'
+                                                    transform: isActive ? 'scale(1.05)' : 'translateY(-1px)'
                                                 },
                                                 '& .MuiButton-startIcon': { 
-                                                    mr: { xs: 0.5, sm: 1.5 },
-                                                    display: { xs: 'none', sm: 'flex' }
+                                                    mr: 1,
+                                                    display: { xs: 'none', sm: 'inline-flex' }
                                                 }
                                             }}
                                         >
@@ -2260,7 +2423,8 @@ const ProductDetails = () => {
                                                     lineHeight: 2.2, 
                                                     fontSize: '14px', 
                                                     fontWeight: 500,
-                                                    maxWidth: '1200px',
+                                                    width: '100%',
+                                                    maxWidth: 'none',
                                                     '& p': { mb: 2.5 },
                                                     '& span': { fontFamily: 'inherit !important' }
                                                 }}
@@ -2377,25 +2541,27 @@ const ProductDetails = () => {
                             )}
 
                             {activeTab === 'gallery' && (
-                                <Paper elevation={0} sx={{ p: 4, borderRadius: '24px', border: '1px solid #f1f5f9', bgcolor: '#ffffff' }}>
-                                    <Typography variant="h6" sx={{ fontWeight: 900, mb: 4, display: 'flex', alignItems: 'center', gap: 1.5, color: '#0f172a' }}>
+                                <Paper elevation={0} sx={{ p: 2, borderRadius: '24px', border: '1px solid #f1f5f9', background: 'transparent' }}>
+                                    <Typography variant="h6" sx={{ fontWeight: 900, mb: 2, display: 'flex', alignItems: 'center', gap: 1.5, color: '#0f172a' }}>
                                         <Box sx={{ width: 36, height: 36, borderRadius: '10px', bgcolor: '#fff1f2', color: '#f43f5e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                             <PhotoLibraryIcon fontSize="small" />
                                         </Box>
                                         Product Gallery
                                     </Typography>
-                                    <Grid container spacing={3}>
+                                    <Grid container spacing={1}>
                                         {galleryImages.length > 0 ? (
                                             galleryImages.map((img, idx) => (
-                                                <Grid item xs={6} sm={4} md={3} lg={2} key={idx}>
+                                                <Grid item xs={6} sm={4} md={2} lg={1.5} key={idx}>
                                                     <Card
                                                         elevation={0}
                                                         sx={{
-                                                            borderRadius: '16px', 
+                                                            borderRadius: '12px',
+                                                            maxWidth: '180px',
                                                             cursor: 'pointer', 
                                                             position: 'relative',
-                                                            border: '1px solid #f1f5f9',
+                                                            border: 'none',
                                                             overflow: 'hidden',
+                                                            background: 'transparent',
                                                             transition: 'all 0.3s ease',
                                                             '&:hover': { 
                                                                 transform: 'scale(1.05)',
@@ -2405,9 +2571,16 @@ const ProductDetails = () => {
                                                         }}
                                                         onClick={() => openSlideshow(idx)}
                                                     >
-                                                        <Box component="img" src={getImageUrl(img.path || img.url || img, 'Resize')} sx={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }} />
+                                                        <Box 
+                                                            component={img.type === 'video' ? "video" : "img"} 
+                                                            src={getImageUrl(img.path || img.url || img, 'Resize')} 
+                                                            sx={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }} 
+                                                            muted={img.type === 'video'}
+                                                            onMouseOver={(e) => img.type === 'video' && e.target.play()}
+                                                            onMouseOut={(e) => img.type === 'video' && (e.target.pause(), e.target.currentTime = 0)}
+                                                        />
                                                         <Box className="overlay" sx={{ position: 'absolute', inset: 0, bgcolor: 'rgba(37,99,235,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0, transition: '0.3s', backdropFilter: 'blur(4px)' }}>
-                                                            <VisibilityIcon sx={{ color: '#fff' }} />
+                                                            {img.type === 'video' ? <PlayArrowIcon sx={{ color: '#fff', fontSize: '2rem' }} /> : <VisibilityIcon sx={{ color: '#fff' }} />}
                                                         </Box>
                                                     </Card>
                                                 </Grid>
@@ -2476,7 +2649,7 @@ const ProductDetails = () => {
                                                 Object.values(v).some(val =>
                                                     val?.toString().toLowerCase().includes(searchTerm.toLowerCase())
                                                 )
-                                            ).map((v) => (
+                                            ).slice(variantsPage * variantsRowsPerPage, (variantsPage + 1) * variantsRowsPerPage).map((v) => (
                                                 <Paper key={v.id || v.Id} sx={{ p: 2, borderRadius: '20px', border: '1px solid #f1f5f9', position: 'relative', overflow: 'hidden' }}>
                                                     <Box sx={{ borderLeft: '4px solid #2563eb', pl: 1.5 }}>
                                                         <Typography variant="subtitle1" fontWeight={800} color="#1e293b">{v.itemname || v.Itemname || 'N/A'}</Typography>
@@ -2494,11 +2667,11 @@ const ProductDetails = () => {
                                                         <Grid item xs={12}>
                                                             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', bgcolor: '#f8fafc', p: 1, borderRadius: '12px' }}>
                                                                 <Box sx={{ flex: 1 }}>
-                                                                    <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, display: 'block' }}>MANAGER</Typography>
+                                                                    <Typography variant="caption" sx={{ fontWeight: 700, color: '#94a3b8', fontSize: '0.65rem' }}>MANAGER</Typography>
                                                                     <Chip label={v.managerStatus || v.ManagerStatus || 'Pending'} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 800, bgcolor: (v.managerStatus || v.ManagerStatus)?.toLowerCase() === 'approved' ? '#dcfce7' : '#fef9c3', color: (v.managerStatus || v.ManagerStatus)?.toLowerCase() === 'approved' ? '#166534' : '#854d0e' }} />
                                                                 </Box>
                                                                 <Box sx={{ flex: 1 }}>
-                                                                    <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, display: 'block' }}>WAREHOUSE</Typography>
+                                                                    <Typography variant="caption" sx={{ fontWeight: 700, color: '#94a3b8', fontSize: '0.65rem' }}>WAREHOUSE</Typography>
                                                                     <Chip label={v.warehouseStatus || v.WarehouseStatus || 'Pending'} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 800, bgcolor: (v.warehouseStatus || v.WarehouseStatus)?.toLowerCase() === 'approved' ? '#dcfce7' : '#fef9c3', color: (v.warehouseStatus || v.WarehouseStatus)?.toLowerCase() === 'approved' ? '#166534' : '#854d0e' }} />
                                                                 </Box>
                                                             </Box>
@@ -2525,11 +2698,11 @@ const ProductDetails = () => {
                                                     </TableRow>
                                                 </TableHead>
                                                 <TableBody>
-                                                    {paginate(variants.filter(v =>
+                                                    {variants.filter(v =>
                                                         Object.values(v).some(val =>
                                                             val?.toString().toLowerCase().includes(searchTerm.toLowerCase())
                                                         )
-                                                    )).map((v) => (
+                                                    ).slice(variantsPage * variantsRowsPerPage, (variantsPage + 1) * variantsRowsPerPage).map((v) => (
                                                         <TableRow key={v.id || v.Id} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
                                                             <TableCell>
                                                                 <Box>
@@ -2571,6 +2744,9 @@ const ProductDetails = () => {
                                                                     <IconButton size="small" onClick={() => handleViewVariant(v)} sx={{ color: '#2563eb', bgcolor: '#eff6ff', borderRadius: '10px' }}>
                                                                         <VisibilityIcon fontSize="small" />
                                                                     </IconButton>
+                                                                    <IconButton size="small" onClick={() => handleEditVariantFromView(v)} sx={{ color: '#fbbf24', bgcolor: '#fffbeb', borderRadius: '10px' }}>
+                                                                        <EditIcon fontSize="small" />
+                                                                    </IconButton>
                                                                     <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2', borderRadius: '10px' }}>
                                                                         <DeleteIcon fontSize="small" />
                                                                     </IconButton>
@@ -2582,6 +2758,23 @@ const ProductDetails = () => {
                                             </Table>
                                         </TableContainer>
                                     )}
+
+                                    <DataTableFooter
+                                        totalItems={variants.filter(v =>
+                                            Object.values(v).some(val =>
+                                                val?.toString().toLowerCase().includes(searchTerm.toLowerCase())
+                                            )
+                                        ).length}
+                                        itemsPerPage={variantsRowsPerPage}
+                                        currentPage={variantsPage + 1}
+                                        onPageChange={(e, value) => setVariantsPage(value - 1)}
+                                        onRowsPerPageChange={(value) => {
+                                            setVariantsRowsPerPage(value);
+                                            setVariantsPage(0);
+                                        }}
+                                        itemLabel="variants"
+                                        sx={{ borderTop: 'none', border: 'none', boxShadow: 'none', mt: 0 }}
+                                    />
                                 </Paper>
                             )}
 
@@ -2602,7 +2795,10 @@ const ProductDetails = () => {
                                         <Button
                                             variant="contained"
                                             startIcon={<AddIcon />}
-                                            onClick={() => setShowAddSetModal(true)}
+                                            onClick={() => {
+                                                setIsEditingSet(false);
+                                                setShowAddSetModal(true);
+                                            }}
                                             sx={{
                                                 background: 'linear-gradient(135deg, #0f172a 0%, #334155 100%)',
                                                 color: 'white',
@@ -2623,7 +2819,7 @@ const ProductDetails = () => {
                                                 Object.values(s).some(val =>
                                                     val.toString().toLowerCase().includes(searchTerm.toLowerCase())
                                                 )
-                                            ).map((s) => (
+                                            ).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => (
                                                 <Paper key={s.id} sx={{ p: 2, borderRadius: '20px', border: '1px solid #f1f5f9' }}>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                                         <Box>
@@ -2633,7 +2829,7 @@ const ProductDetails = () => {
                                                         <Chip label={s.discount} size="small" sx={{ bgcolor: '#dcfce7', color: '#166534', fontWeight: 800, borderRadius: '6px' }} />
                                                     </Box>
                                                     <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                                                        <Button size="small" variant="text" color="primary" sx={{ fontWeight: 800, textTransform: 'none' }}>View Set</Button>
+                                                        <Button size="small" variant="text" color="primary" sx={{ fontWeight: 800, textTransform: 'none' }} onClick={() => handleOpenViewSet(s)}>View Set</Button>
                                                     </Box>
                                                 </Paper>
                                             ))}
@@ -2650,17 +2846,17 @@ const ProductDetails = () => {
                                                     </TableRow>
                                                 </TableHead>
                                                 <TableBody>
-                                                    {paginate(sets.filter(s =>
+                                                    {sets.filter(s =>
                                                         Object.values(s).some(val =>
                                                             val.toString().toLowerCase().includes(searchTerm.toLowerCase())
                                                         )
-                                                    )).map((s) => (
+                                                    ).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => (
                                                         <TableRow key={s.id} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
                                                             <TableCell sx={{ fontWeight: 800, color: '#1e293b' }}>{s.name}</TableCell>
                                                             <TableCell sx={{ color: '#475569' }}>{s.items}</TableCell>
                                                             <TableCell><Chip label={s.discount} size="small" sx={{ bgcolor: '#ecfdf5', color: '#065f46', fontWeight: 800, borderRadius: '6px' }} /></TableCell>
                                                             <TableCell align="center">
-                                                                <Button size="small" sx={{ fontWeight: 800, textTransform: 'none', borderRadius: '8px' }}>View Set</Button>
+                                                                <Button size="small" sx={{ fontWeight: 800, textTransform: 'none', borderRadius: '8px' }} onClick={() => handleOpenViewSet(s)}>View Set</Button>
                                                             </TableCell>
                                                         </TableRow>
                                                     ))}
@@ -2668,7 +2864,207 @@ const ProductDetails = () => {
                                             </Table>
                                         </TableContainer>
                                     )}
+
+                                    <DataTableFooter
+                                        totalItems={sets.filter(s =>
+                                            Object.values(s).some(val =>
+                                                val.toString().toLowerCase().includes(searchTerm.toLowerCase())
+                                            )
+                                        ).length}
+                                        itemsPerPage={setsRowsPerPage}
+                                        currentPage={setsPage + 1}
+                                        onPageChange={(e, value) => setSetsPage(value - 1)}
+                                        onRowsPerPageChange={(value) => {
+                                            setSetsRowsPerPage(value);
+                                            setSetsPage(0);
+                                        }}
+                                        itemLabel="sets"
+                                        sx={{ borderTop: 'none', border: 'none', boxShadow: 'none', mt: 0 }}
+                                    />
                                 </Paper>
+                            )}
+
+                            {/* View Set Modal */}
+                            {showViewSetModal && selectedSetForView && (
+                                <Dialog
+                                    open={showViewSetModal}
+                                    onClose={() => setShowViewSetModal(false)}
+                                    maxWidth="md"
+                                    fullWidth
+                                    PaperProps={{ sx: { borderRadius: '16px', overflow: 'hidden', boxShadow: '0 24px 80px rgba(2,6,23,0.35)' } }}
+                                >
+                                    <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#2C3E50', color: 'white' }}>
+                                        <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '10px', letterSpacing: '0.2px' }}>
+                                            <InventoryIcon /> {selectedSetForView.name || 'Set'}
+                                        </h3>
+                                        <IconButton onClick={() => setShowViewSetModal(false)} sx={{ color: 'white' }}><CloseIcon /></IconButton>
+                                    </div>
+                                    <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f8fafc', px: 2, py: 1 }}>
+                                        <Tabs
+                                            value={viewSetTab}
+                                            onChange={(e, val) => setViewSetTab(val)}
+                                            variant="fullWidth"
+                                            TabIndicatorProps={{ style: { display: 'none' } }}
+                                            sx={{
+                                                '& .MuiTabs-flexContainer': { gap: 1 },
+                                                '& .MuiTab-root': {
+                                                    textTransform: 'none',
+                                                    fontWeight: 700,
+                                                    minHeight: 40,
+                                                    borderRadius: '999px',
+                                                    border: '1px solid #e2e8f0',
+                                                    bgcolor: '#ffffff',
+                                                    px: 2
+                                                },
+                                                '& .MuiTab-root:hover': { bgcolor: '#f1f5f9' },
+                                                '& .Mui-selected': { bgcolor: '#2C3E50', color: '#fff !important', borderColor: '#2C3E50' }
+                                            }}
+                                        >
+                                            <Tab label="Combo Details" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
+                                            <Tab label="Photos & Videos" icon={<PhotoLibraryIcon fontSize="small" />} iconPosition="start" />
+                                            <Tab label="Pricing" icon={<AttachMoneyIcon fontSize="small" />} iconPosition="start" />
+                                            <Tab label="Dimensions" icon={<CategoryIcon fontSize="small" />} iconPosition="start" />
+                                        </Tabs>
+                                    </Box>
+                                    <DialogContent dividers sx={{ minHeight: 360, bgcolor: '#ffffff' }}>
+                                        {viewSetTab === 0 && (
+                                            <Stack spacing={2}>
+                                                <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Summary</Typography>
+                                                    <Grid container spacing={2}>
+                                                        <Grid item xs={12} md={6}>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Combo Name</Typography>
+                                                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{selectedSetForView.name || selectedSetForView.setName || '—'}</Typography>
+                                                        </Grid>
+                                                        <Grid item xs={12} md={6}>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Discount</Typography>
+                                                            <Box sx={{ mt: 0.5 }}><Chip label={selectedSetForView.discount || '—'} size="small" /></Box>
+                                                        </Grid>
+                                                    </Grid>
+                                                </Paper>
+
+                                                <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Included Items</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.items || (selectedSetForView.itemsList?.map(i => `${i.itemName} x${i.qty}`).join(', ')) || '—'}</Typography>
+                                                </Paper>
+
+                                                <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Identifiers</Typography>
+                                                    <Grid container spacing={2}>
+                                                        <Grid item xs={12} md={4}>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Model No</Typography>
+                                                            <Typography variant="body2">{selectedSetForView.modelNo || '—'}</Typography>
+                                                        </Grid>
+                                                        <Grid item xs={12} md={4}>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Batch No</Typography>
+                                                            <Typography variant="body2">{selectedSetForView.batchNo || '—'}</Typography>
+                                                        </Grid>
+                                                        <Grid item xs={12} md={4}>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>EAN/Barcode</Typography>
+                                                            <Typography variant="body2">{selectedSetForView.ean || '—'}</Typography>
+                                                        </Grid>
+                                                    </Grid>
+                                                </Paper>
+
+                                                <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Marketplace</Typography>
+                                                    <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1 }}>
+                                                        <Table size="small">
+                                                            <TableBody>
+                                                                {(selectedSetForView.marketPlaces || comboFormData.marketPlaces || []).map((mp, idx) => (
+                                                                    <TableRow key={idx}>
+                                                                        <TableCell sx={{ borderRight: '1px solid #eee', width: '150px' }}>{mp.name}</TableCell>
+                                                                        <TableCell align="center" sx={{ width: '60px', borderRight: '1px solid #eee' }}>{mp.selected ? 'Yes' : 'No'}</TableCell>
+                                                                        <TableCell>{mp.link || '—'}</TableCell>
+                                                                    </TableRow>
+                                                                ))}
+                                                            </TableBody>
+                                                        </Table>
+                                                    </TableContainer>
+                                                </Paper>
+
+                                                <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Descriptions</Typography>
+                                                    <Typography variant="caption" sx={{ color: '#64748b' }}>Short</Typography>
+                                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>{selectedSetForView.shortDescription || '—'}</Typography>
+                                                    <Typography variant="caption" sx={{ color: '#64748b' }}>Long</Typography>
+                                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{selectedSetForView.description || '—'}</Typography>
+                                                </Paper>
+                                            </Stack>
+                                        )}
+
+                                        {viewSetTab === 1 && (
+                                            <Box>
+                                                <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Photos</Typography>
+                                                <Grid container spacing={1}>
+                                                    {(selectedSetForView.imageFiles || []).map((img, idx) => (
+                                                        <Grid item key={idx}>
+                                                            <Box sx={{ width: 80, height: 80, border: '1px solid #ddd', borderRadius: 1, overflow: 'hidden' }}>
+                                                                <img src={img.preview || img.url} alt="img" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                            </Box>
+                                                        </Grid>
+                                                    ))}
+                                                </Grid>
+                                                <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Videos</Typography>
+                                                <Typography variant="body2">{(selectedSetForView.videoFiles || []).length} video(s)</Typography>
+                                            </Box>
+                                        )}
+
+                                        {viewSetTab === 2 && (
+                                            <Grid container spacing={2}>
+                                                <Grid item xs={12} md={4}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Wholesale Price</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.wholesalePrice ?? '—'}</Typography>
+                                                </Grid>
+                                                <Grid item xs={12} md={4}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Retail Price</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.retailPrice ?? '—'}</Typography>
+                                                </Grid>
+                                                <Grid item xs={12} md={4}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Online Price</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.onlinePrice ?? '—'}</Typography>
+                                                </Grid>
+                                            </Grid>
+                                        )}
+
+                                        {viewSetTab === 3 && (
+                                            <Grid container spacing={2}>
+                                                <Grid item xs={12} md={6}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Length</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.length ?? '—'}</Typography>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Width</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.width ?? '—'}</Typography>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>HS Code</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.hsCode ?? '—'}</Typography>
+                                                </Grid>
+                                                <Grid item xs={12} md={6}>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Height</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.height ?? '—'}</Typography>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Weight</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.weight ?? '—'}</Typography>
+                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Country of Origin</Typography>
+                                                    <Typography variant="body2">{selectedSetForView.countryOfOrigin ?? '—'}</Typography>
+                                                </Grid>
+                                            </Grid>
+                                        )}
+                                    </DialogContent>
+                                    <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
+                                        <Button
+                                            onClick={() => handleDeleteSet(selectedSetForView.id ?? selectedSetForView.Id)}
+                                            sx={{ color: '#dc2626', fontWeight: 700 }}
+                                        >
+                                            Delete
+                                        </Button>
+                                        <Button
+                                            variant="contained"
+                                            onClick={handleEditFromViewSet}
+                                            startIcon={<EditIcon />}
+                                            sx={{ bgcolor: '#2C3E50', '&:hover': { bgcolor: '#243746' } }}
+                                        >
+                                            Edit
+                                        </Button>
+                                    </DialogActions>
+                                </Dialog>
                             )}
 
                             {activeTab === 'price' && (
@@ -2687,7 +3083,7 @@ const ProductDetails = () => {
 
                                     {isMobile ? (
                                         <Stack spacing={2} sx={{ p: 2 }}>
-                                            {variants.map((v, index) => (
+                                            {variants.slice(pricingPage * pricingRowsPerPage, (pricingPage + 1) * pricingRowsPerPage).map((v, index) => (
                                                 <Paper key={v.id || index} sx={{ p: 2, borderRadius: '20px', border: '1px solid #f1f5f9' }}>
                                                     <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                                                         <Avatar
@@ -2739,7 +3135,7 @@ const ProductDetails = () => {
                                                     </TableRow>
                                                 </TableHead>
                                                 <TableBody>
-                                                    {variants.map((v, index) => (
+                                                    {variants.slice(pricingPage * pricingRowsPerPage, (pricingPage + 1) * pricingRowsPerPage).map((v, index) => (
                                                         <TableRow key={v.id || index} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
                                                             <TableCell>
                                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -2786,6 +3182,19 @@ const ProductDetails = () => {
                                             </Table>
                                         </TableContainer>
                                     )}
+
+                                    <DataTableFooter
+                                        totalItems={variants.length}
+                                        itemsPerPage={pricingRowsPerPage}
+                                        currentPage={pricingPage + 1}
+                                        onPageChange={(e, value) => setPricingPage(value - 1)}
+                                        onRowsPerPageChange={(value) => {
+                                            setPricingRowsPerPage(value);
+                                            setPricingPage(0);
+                                        }}
+                                        itemLabel="variants"
+                                        sx={{ borderTop: 'none', border: 'none', boxShadow: 'none', mt: 0 }}
+                                    />
 
                                     {variants.length === 0 && (
                                         <Box sx={{ p: 8, textAlign: 'center' }}>
@@ -2999,263 +3408,470 @@ const ProductDetails = () => {
                             onClose={() => setShowModal(false)}
                             maxWidth="md"
                             fullWidth
+                            fullScreen={isMobile}
+                            TransitionProps={{ timeout: 400 }}
                             PaperProps={{
                                 sx: {
-                                    borderRadius: '16px',
-                                    overflow: 'hidden'
+                                    borderRadius: isMobile ? 0 : '24px',
+                                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                                    overflow: 'hidden',
+                                    background: 'linear-gradient(135deg, #ffffff 0%, #f9fafb 100%)'
                                 }
                             }}
                         >
-                            {/* Modal Header */}
-                            <div className="add-items-modal-header" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <h3 className="add-items-modal-title" style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center' }}>
-                                    <EditIcon sx={{ mr: 1, fontSize: 20 }} />
-                                    Edit Product - {formData.product_name}
-                                </h3>
-                                <IconButton onClick={() => setShowModal(false)} sx={{ color: 'white', p: 0.5 }}>
+                            {/* Header Task Modern */}
+                            <DialogTitle sx={{ 
+                                background: 'linear-gradient(90deg, #1e293b 0%, #334155 100%)', 
+                                color: '#fff', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'space-between',
+                                px: { xs: 2, sm: 4 },
+                                py: { xs: 2, sm: 3 }
+                            }}>
+                                <Stack direction="row" spacing={isMobile ? 1 : 1.5} alignItems="center">
+                                    <Box sx={{ 
+                                        p: 1, 
+                                        borderRadius: '12px', 
+                                        bgcolor: 'rgba(255, 255, 255, 0.1)',
+                                        display: 'flex',
+                                        scale: isMobile ? '0.8' : '1'
+                                    }}>
+                                        <EditIcon />
+                                    </Box>
+                                    <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 800, letterSpacing: '-0.02em' }}>
+                                        Edit Product - {formData.product_name}
+                                    </Typography>
+                                </Stack>
+
+                                <IconButton onClick={() => setShowModal(false)} sx={{ color: 'rgba(255,255,255,0.7)', '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.1)' } }}>
                                     <CloseIcon />
                                 </IconButton>
-                            </div>
+                            </DialogTitle>
 
-                            <DialogContent sx={{ p: 0 }}>
-                                <div className="add-items-modal-body" style={{ padding: '24px' }}>
-                                    {/* Step Wizard Navigation */}
-                                    <Box sx={{ width: '100%', mb: 4, mt: 2 }}>
-                                        <Stepper activeStep={currentStep - 1} alternativeLabel>
-                                            {['Item Details', 'Features', 'Specifications', 'Finalize'].map((label) => (
-                                                <Step key={label}>
-                                                    <StepLabel>{label}</StepLabel>
-                                                </Step>
-                                            ))}
-                                        </Stepper>
-                                    </Box>
-                                    {modalMessage && (
-                                        <div className={`alert ${modalMessage.includes('✓') || modalMessage.toLowerCase().includes('success') ? 'alert-success' : 'alert-danger'}`} style={{
-                                            marginBottom: '20px',
-                                            padding: '12px 16px',
-                                            borderRadius: '8px',
-                                            background: modalMessage.includes('✓') || modalMessage.toLowerCase().includes('success') ? '#d1fae5' : '#fee2e2',
-                                            color: modalMessage.includes('✓') || modalMessage.toLowerCase().includes('success') ? '#065f46' : '#dc2626',
-                                            border: `1px solid ${modalMessage.includes('✓') || modalMessage.toLowerCase().includes('success') ? '#6ee7b7' : '#fecaca'}`,
-                                            fontWeight: '500'
-                                        }}>
+                            <DialogContent sx={{ px: { xs: 2, sm: 4 }, pb: { xs: 3, sm: 4 }, pt: '31px !important' }}>
+                                {modalMessage && (
+                                    <Grow in={!!modalMessage}>
+                                        <Alert 
+                                            severity="error" 
+                                            icon={<Box component="span" sx={{ fontSize: '1.2rem', mr: 1 }}>⚠️</Box>}
+                                            onClose={() => setModalMessage('')}
+                                            sx={{ 
+                                                mb: 4, 
+                                                borderRadius: '16px', 
+                                                bgcolor: '#fef2f2', 
+                                                color: '#b91c1c',
+                                                border: '1px solid #fecaca',
+                                                '& .MuiAlert-icon': { color: '#ef4444' },
+                                                fontWeight: 600
+                                            }}
+                                        >
                                             {modalMessage}
-                                        </div>
-                                    )}
+                                        </Alert>
+                                    </Grow>
+                                )}
 
+                                {/* Premium Stepper */}
+                                <Stepper 
+                                    activeStep={currentStep - 1} 
+                                    alternativeLabel 
+                                    sx={{ 
+                                        mb: 6,
+                                        '& .MuiStepLabel-label': { 
+                                            mt: 1.5,
+                                            fontWeight: 700, 
+                                            color: '#94a3b8',
+                                            fontSize: '0.85rem'
+                                        },
+                                        '& .MuiStepLabel-label.Mui-active': { color: '#2563eb' },
+                                        '& .MuiStepLabel-label.Mui-completed': { color: '#10b981' },
+                                        '& .MuiStepIcon-root': { 
+                                            width: 36, 
+                                            height: 36,
+                                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                            color: '#e2e8f0',
+                                            '&.Mui-active': { color: '#2563eb', filter: 'drop-shadow(0 4px 6px rgba(37, 99, 235, 0.3))' },
+                                            '&.Mui-completed': { color: '#10b981' }
+                                        }
+                                    }}
+                                >
+                                    {['Info', 'Features', 'Specifications', 'Task Details'].map((label) => (
+                                        <Step key={label}>
+                                            <StepLabel sx={{ 
+                                                '& .MuiStepLabel-label': { 
+                                                    display: { xs: 'none', sm: 'block' },
+                                                    fontSize: '0.8rem',
+                                                    fontWeight: 700
+                                                } 
+                                            }}>
+                                                {label}
+                                            </StepLabel>
+                                        </Step>
+                                    ))}
+                                </Stepper>
+
+                                <Box sx={{ minHeight: 400, px: 2, pt: 1 }}>
                                     <form onSubmit={handleEditSubmit}>
                                         {currentStep === 1 && (
-                                            <div className="grid-fields-container">
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Product Name <span style={{ color: 'red' }}>*</span></label>
-                                                    <input
-                                                        type="text"
-                                                        className="form-input-custom"
-                                                        placeholder="Enter Product Name"
-                                                        value={formData.product_name}
-                                                        onChange={(e) => handleInputChange('product_name', e.target.value)}
-                                                        required
+                                            <Grow in={currentStep === 1} timeout={500}>
+                                                <Stack spacing={4}>
+                                                    <TextField 
+                                                        label="Product Name" 
+                                                        fullWidth 
+                                                        required 
+                                                        variant="outlined"
+                                                        placeholder="e.g. Premium Gaming Chair X1"
+                                                        value={formData.product_name} 
+                                                        onChange={(e) => handleInputChange('product_name', e.target.value)} 
+                                                        sx={{ 
+                                                            '& .MuiOutlinedInput-root': {
+                                                                borderRadius: '16px',
+                                                                bgcolor: '#fff',
+                                                                transition: 'all 0.2s',
+                                                                '&:hover': { bgcolor: '#fafafa' },
+                                                                '&.Mui-focused': { boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.1)' }
+                                                            }
+                                                        }}
                                                     />
-                                                </div>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Category <span style={{ color: 'red' }}>*</span></label>
-                                                    <select
-                                                        className="form-input-custom"
-                                                        value={formData.category_id}
-                                                        onChange={handleCategoryChange}
-                                                        required
-                                                    >
-                                                        <option value="">Select Category</option>
-                                                        {renderCategoryTreeOptions(categories)}
-                                                    </select>
-                                                </div>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Brand <span style={{ color: 'red' }}>*</span></label>
-                                                    <select
-                                                        className="form-input-custom"
-                                                        value={formData.brand_id}
-                                                        onChange={(e) => handleInputChange('brand_id', e.target.value)}
-                                                        required
-                                                    >
-                                                        <option value="">Select Brand</option>
-                                                        {brands.map(b => (
-                                                            <option key={b.brand_id || b.id || b.Id} value={b.brand_id || b.id || b.Id}>
-                                                                {b.brand || b.Brand || b.name || b.Name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Priority</label>
-                                                    <select
-                                                        className="form-input-custom"
-                                                        value={formData.priority}
-                                                        onChange={(e) => handleInputChange('priority', e.target.value)}
-                                                    >
-                                                        <option value="Low">Low</option>
-                                                        <option value="Medium">Medium</option>
-                                                        <option value="High">High</option>
-                                                        <option value="Urgent">Urgent</option>
-                                                    </select>
-                                                </div>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Status</label>
-                                                    <select
-                                                        className="form-input-custom"
-                                                        value={formData.status}
-                                                        onChange={(e) => handleInputChange('status', e.target.value)}
-                                                    >
-                                                        <option value="Active">Active</option>
-                                                        <option value="Inactive">Inactive</option>
-                                                    </select>
-                                                </div>
-                                            </div>
+                                                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2.5} sx={{ width: '100%' }}>
+                                                        <Autocomplete
+                                                            fullWidth
+                                                            options={getFlattenedCategories(categories)}
+                                                            getOptionLabel={(option) => option.fullName || ''}
+                                                            value={getFlattenedCategories(categories).find(c => String(c.id) === String(formData.category_id)) || null}
+                                                            onChange={(e, newValue) => handleInputChange('category_id', newValue ? newValue.id : '')}
+                                                            renderOption={(props, option) => (
+                                                                <Box component="li" {...props} sx={{ 
+                                                                    display: 'flex !important', 
+                                                                    flexDirection: 'column !important', 
+                                                                    alignItems: 'flex-start !important', 
+                                                                    py: '12px !important',
+                                                                    px: '16px !important',
+                                                                    borderBottom: '1px solid #f1f5f9',
+                                                                    '&:last-child': { borderBottom: 0 },
+                                                                    pl: `${option.depth * 24 + 16}px !important`,
+                                                                    bgcolor: option.depth === 0 ? '#f8fafc !important' : 'transparent !important',
+                                                                    '&:hover': { bgcolor: '#f1f5f9 !important' }
+                                                                }}>
+                                                                    <Stack direction="row" spacing={1} alignItems="center">
+                                                                        {option.depth > 0 && <Box sx={{ color: '#94a3b8', fontSize: '1rem', fontWeight: 300 }}>↳</Box>}
+                                                                        <Typography variant="body2" sx={{ 
+                                                                            fontWeight: option.depth === 0 ? 800 : 500, 
+                                                                            color: '#1e293b',
+                                                                            fontSize: option.depth === 0 ? '0.9rem' : '0.85rem'
+                                                                        }}>
+                                                                            {option.name}
+                                                                        </Typography>
+                                                                    </Stack>
+                                                                    <Typography variant="caption" sx={{ color: '#64748b', fontSize: '0.65rem', mt: 0.5, letterSpacing: '0.02em' }}>
+                                                                        {option.fullName}
+                                                                    </Typography>
+                                                                </Box>
+                                                            )}
+                                                            renderInput={(params) => <TextField {...params} label="Category" required sx={{ '& .MuiOutlinedInput-root': { borderRadius: '16px' } }} />}
+                                                        />
+
+                                                        <Autocomplete
+                                                            fullWidth
+                                                            options={brands}
+                                                            getOptionLabel={(option) => option.brand || option.Brand || ''}
+                                                            value={brands.find(b => String(b.brand_id || b.id || b.Id) === String(formData.brand_id)) || null}
+                                                            onChange={(e, newValue) => handleInputChange('brand_id', newValue ? (newValue.brand_id || newValue.id || newValue.Id) : '')}
+                                                            renderInput={(params) => <TextField {...params} label="Brand" required sx={{ '& .MuiOutlinedInput-root': { borderRadius: '16px' } }} />}
+                                                        />
+                                                    </Stack>
+
+                                                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2.5} sx={{ width: '100%' }}>
+                                                        <FormControl fullWidth>
+                                                            <InputLabel>Priority</InputLabel>
+                                                            <Select 
+                                                                label="Priority" 
+                                                                value={formData.priority} 
+                                                                onChange={(e) => handleInputChange('priority', e.target.value)}
+                                                                sx={{ borderRadius: '16px', bgcolor: '#fff' }}
+                                                            >
+                                                                <MenuItem value="Low">
+                                                                    <Stack direction="row" spacing={1} alignItems="center">
+                                                                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#94a3b8' }} />
+                                                                        <Typography variant="body2">Low</Typography>
+                                                                    </Stack>
+                                                                </MenuItem>
+                                                                <MenuItem value="Medium">
+                                                                    <Stack direction="row" spacing={1} alignItems="center">
+                                                                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#3b82f6' }} />
+                                                                        <Typography variant="body2">Medium</Typography>
+                                                                    </Stack>
+                                                                </MenuItem>
+                                                                <MenuItem value="High">
+                                                                    <Stack direction="row" spacing={1} alignItems="center">
+                                                                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#f59e0b' }} />
+                                                                        <Typography variant="body2">High</Typography>
+                                                                    </Stack>
+                                                                </MenuItem>
+                                                                <MenuItem value="Urgent">
+                                                                    <Stack direction="row" spacing={1} alignItems="center">
+                                                                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#ef4444' }} />
+                                                                        <Typography variant="body2" sx={{ fontWeight: 700 }}>Urgent</Typography>
+                                                                    </Stack>
+                                                                </MenuItem>
+                                                            </Select>
+                                                        </FormControl>
+                                                        
+                                                        <FormControl fullWidth>
+                                                            <InputLabel>Status</InputLabel>
+                                                            <Select 
+                                                                label="Status" 
+                                                                value={formData.status} 
+                                                                onChange={(e) => handleInputChange('status', e.target.value)}
+                                                                sx={{ borderRadius: '16px', bgcolor: '#fff' }}
+                                                            >
+                                                                <MenuItem value="Active">Active</MenuItem>
+                                                                <MenuItem value="Inactive">Inactive</MenuItem>
+                                                            </Select>
+                                                        </FormControl>
+                                                    </Stack>
+                                                </Stack>
+                                            </Grow>
                                         )}
 
                                         {currentStep === 2 && (
-                                            <Box sx={{ mt: 1 }}>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Product Description</label>
-                                                    <textarea
-                                                        className="form-input-custom textarea-custom"
-                                                        value={formData.product_description}
-                                                        onChange={(e) => handleInputChange('product_description', e.target.value)}
-                                                    />
-                                                </div>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                                    <Typography variant="subtitle1" fontWeight={600}>Features</Typography>
-                                                    <Button onClick={addFeature} variant="outlined" size="small">
-                                                        Add Feature
-                                                    </Button>
-                                                </Box>
-                                                <div className="features-list-editor">
-                                                    {formData.features.map((f, i) => (
-                                                        <div key={i} className="form-group-custom" style={{ marginBottom: '10px' }}>
-                                                            <input
-                                                                type="text"
-                                                                className="form-input-custom"
-                                                                placeholder={`Feature ${i + 1}`}
-                                                                value={f}
-                                                                onChange={(e) => updateFeature(i, e.target.value)}
-                                                            />
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </Box>
+                                            <Grow in={currentStep === 2} timeout={500}>
+                                                <Stack spacing={4}>
+                                                    <Box>
+                                                        <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                            <DescriptionIcon sx={{ fontSize: 18 }} /> Product Story & Description
+                                                        </Typography>
+                                                        <TextField 
+                                                            fullWidth 
+                                                            multiline 
+                                                            rows={5} 
+                                                            value={formData.product_description} 
+                                                            onChange={(e) => handleInputChange('product_description', e.target.value)} 
+                                                            placeholder="Write a compelling story about your product..."
+                                                            sx={{ 
+                                                                '& .MuiOutlinedInput-root': {
+                                                                    borderRadius: '20px',
+                                                                    bgcolor: '#fff',
+                                                                    '&:hover': { bgcolor: '#fafafa' }
+                                                                }
+                                                            }}
+                                                        />
+                                                    </Box>
+                                                    <Box sx={{ p: 3, borderRadius: '24px', bgcolor: '#f1f5f9', border: '1px dashed #cbd5e1' }}>
+                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5 }}>
+                                                            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>✨ Key Features</Typography>
+                                                            <Button 
+                                                                variant="contained"
+                                                                size="small" 
+                                                                startIcon={<AddIcon />} 
+                                                                onClick={addFeature}
+                                                                sx={{ 
+                                                                    borderRadius: '12px', 
+                                                                    bgcolor: '#fff', 
+                                                                    color: '#2563eb',
+                                                                    boxShadow: 'none',
+                                                                    border: '1px solid #e2e8f0',
+                                                                    '&:hover': { bgcolor: '#f8fafc', boxShadow: 'none' }
+                                                                }}
+                                                            >
+                                                                Add Feature
+                                                            </Button>
+                                                        </Box>
+                                                        <Stack spacing={2}>
+                                                            {formData.features.map((f, i) => (
+                                                                <Grow in key={i} timeout={300 + (i * 100)}>
+                                                                    <TextField 
+                                                                        size="small" 
+                                                                        fullWidth 
+                                                                        placeholder={`Highlight feature ${i + 1}`} 
+                                                                        value={f} 
+                                                                        onChange={(e) => updateFeature(i, e.target.value)} 
+                                                                        sx={{ 
+                                                                            '& .MuiOutlinedInput-root': {
+                                                                                borderRadius: '12px',
+                                                                                bgcolor: '#fff'
+                                                                            }
+                                                                        }} 
+                                                                    />
+                                                                </Grow>
+                                                            ))}
+                                                        </Stack>
+                                                    </Box>
+                                                </Stack>
+                                            </Grow>
                                         )}
 
                                         {currentStep === 3 && (
-                                            <Box sx={{ mt: 1 }}>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                                    <Typography variant="subtitle1" fontWeight={600}>Specifications</Typography>
-                                                    <Button onClick={addSpec} variant="outlined" size="small">
-                                                        Add Specification
-                                                    </Button>
-                                                </Box>
-                                                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-                                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                                        <thead>
-                                                            <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                                                <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#1e293b', width: '40%' }}>Parameter</th>
-                                                                <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>Value</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
+                                            <Grow in={currentStep === 3} timeout={500}>
+                                                <Box>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                                        <Box>
+                                                            <Typography variant="h6" sx={{ fontWeight: 800, color: '#1e293b' }}>Technical Specifications</Typography>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Define the core technical parameters of the product</Typography>
+                                                        </Box>
+                                                        <Button 
+                                                            variant="outlined"
+                                                            size="small" 
+                                                            startIcon={<AddIcon />} 
+                                                            onClick={addSpec}
+                                                            sx={{ borderRadius: '12px', borderStyle: 'dashed' }}
+                                                        >
+                                                            Add Row
+                                                        </Button>
+                                                    </Box>
+                                                    {!isMobile ? (
+                                                        <TableContainer component={Paper} elevation={0} sx={{ borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                                            <Table size="small">
+                                                                <TableHead sx={{ bgcolor: '#f8fafc' }}>
+                                                                    <TableRow>
+                                                                        <TableCell sx={{ fontWeight: 800, color: '#475569', py: 2, borderRight: '1px solid #e2e8f0' }}>Parameter</TableCell>
+                                                                        <TableCell sx={{ fontWeight: 800, color: '#475569', py: 2 }}>Value / Description</TableCell>
+                                                                    </TableRow>
+                                                                </TableHead>
+                                                                <TableBody>
+                                                                    {formData.specifications.map((s, i) => (
+                                                                        <TableRow key={i} sx={{ '&:last-child td': { borderBottom: 0 } }}>
+                                                                            <TableCell sx={{ borderRight: '1px solid #f1f5f9', py: 1.5 }}>
+                                                                                <TextField 
+                                                                                    size="small" 
+                                                                                    fullWidth 
+                                                                                    variant="standard" 
+                                                                                    InputProps={{ disableUnderline: true, sx: { fontWeight: 600 } }}
+                                                                                    value={s.parameter} 
+                                                                                    onChange={(e) => updateSpec(i, 'parameter', e.target.value)} 
+                                                                                    placeholder="e.g. Dimensions" 
+                                                                                />
+                                                                            </TableCell>
+                                                                            <TableCell sx={{ py: 1.5 }}>
+                                                                                <TextField 
+                                                                                    size="small" 
+                                                                                    fullWidth 
+                                                                                    variant="standard" 
+                                                                                    InputProps={{ disableUnderline: true }}
+                                                                                    value={s.description} 
+                                                                                    onChange={(e) => updateSpec(i, 'description', e.target.value)} 
+                                                                                    placeholder="e.g. 120 x 80 x 40 cm" 
+                                                                                />
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    ))}
+                                                                </TableBody>
+                                                            </Table>
+                                                        </TableContainer>
+                                                    ) : (
+                                                        <Stack spacing={2}>
                                                             {formData.specifications.map((s, i) => (
-                                                                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                                    <td style={{ padding: '10px 16px' }}>
-                                                                        <input
-                                                                            type="text"
-                                                                            className="form-input-custom"
-                                                                            placeholder="e.g. Color"
-                                                                            value={s.parameter}
-                                                                            onChange={(e) => updateSpec(i, 'parameter', e.target.value)}
+                                                                <Paper key={i} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                                    <Stack spacing={2}>
+                                                                        <TextField 
+                                                                            label="Parameter"
+                                                                            size="small" 
+                                                                            fullWidth 
+                                                                            value={s.parameter} 
+                                                                            onChange={(e) => updateSpec(i, 'parameter', e.target.value)} 
+                                                                            placeholder="e.g. Dimensions" 
                                                                         />
-                                                                    </td>
-                                                                    <td style={{ padding: '10px 16px' }}>
-                                                                        <input
-                                                                            type="text"
-                                                                            className="form-input-custom"
-                                                                            placeholder="e.g. Red"
-                                                                            value={s.description}
-                                                                            onChange={(e) => updateSpec(i, 'description', e.target.value)}
+                                                                        <TextField 
+                                                                            label="Value"
+                                                                            size="small" 
+                                                                            fullWidth 
+                                                                            value={s.description} 
+                                                                            onChange={(e) => updateSpec(i, 'description', e.target.value)} 
+                                                                            placeholder="e.g. 120 x 80 x 40 cm" 
                                                                         />
-                                                                    </td>
-                                                                </tr>
+                                                                    </Stack>
+                                                                </Paper>
                                                             ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </Box>
+                                                        </Stack>
+                                                    )}
+                                                </Box>
+                                            </Grow>
                                         )}
 
                                         {currentStep === 4 && (
-                                            <Box sx={{ mt: 2 }}>
-                                                <div className="form-group-custom">
-                                                    <label className="form-label-custom">Task Description</label>
-                                                    <textarea
-                                                        className="form-input-custom textarea-custom"
-                                                        rows={6}
-                                                        placeholder="Enter details about this product task..."
-                                                        value={formData.task_description}
-                                                        onChange={(e) => handleInputChange('task_description', e.target.value)}
+                                            <Grow in={currentStep === 4} timeout={500}>
+                                                <Box>
+                                                    <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 4, p: 3, bgcolor: '#f0f9ff', borderRadius: '20px', border: '1px solid #bae6fd' }}>
+                                                        <Box sx={{ p: 1.5, bgcolor: '#fff', borderRadius: '12px', border: '1px solid #38bdf8', display: 'flex', color: '#0284c7' }}>
+                                                            <AssignmentIcon />
+                                                        </Box>
+                                                        <Box>
+                                                            <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#0c4a6e' }}>Update Task Details</Typography>
+                                                            <Typography variant="body2" sx={{ color: '#0369a1' }}>Provide reasoning or additional instructions for this update.</Typography>
+                                                        </Box>
+                                                    </Stack>
+                                                    <TextField 
+                                                        fullWidth 
+                                                        multiline 
+                                                        rows={8} 
+                                                        placeholder="Enter details about why you're updating this product..." 
+                                                        value={formData.task_description} 
+                                                        onChange={(e) => handleInputChange('task_description', e.target.value)} 
+                                                        sx={{ 
+                                                            '& .MuiOutlinedInput-root': {
+                                                                borderRadius: '24px',
+                                                                bgcolor: '#fff',
+                                                                p: 3
+                                                            }
+                                                        }}
                                                     />
-                                                </div>
-                                            </Box>
+                                                </Box>
+                                            </Grow>
                                         )}
-
-                                        {/* Modal Footer */}
-                                        <DialogActions sx={{ p: 3, pt: 2, borderTop: '1px solid #f1f5f9', mt: 2 }}>
-                                            <Button
-                                                variant="outlined"
-                                                color="inherit"
-                                                onClick={() => (currentStep > 1 ? setCurrentStep(currentStep - 1) : setShowModal(false))}
-                                                sx={{ borderRadius: '8px', textTransform: 'none', color: '#64748b', borderColor: '#cbd5e1' }}
-                                            >
-                                                {currentStep === 1 ? 'Cancel Changes' : 'Previous Step'}
-                                            </Button>
-
-                                            <Box sx={{ flex: '1 1 auto' }} />
-
-                                            {currentStep < 4 ? (
-                                                <Button
-                                                    variant="contained"
-                                                    onClick={handleNext}
-                                                    sx={{
-                                                        bgcolor: '#2563eb',
-                                                        borderRadius: '8px',
-                                                        px: 3,
-                                                        py: 1,
-                                                        textTransform: 'none',
-                                                        boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)',
-                                                        '&:hover': { bgcolor: '#1d4ed8' }
-                                                    }}
-                                                >
-                                                    Next Section &rarr;
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    type="submit"
-                                                    variant="contained"
-                                                    disabled={formLoading}
-                                                    sx={{
-                                                        bgcolor: '#10b981',
-                                                        borderRadius: '8px',
-                                                        px: 3,
-                                                        py: 1,
-                                                        textTransform: 'none',
-                                                        boxShadow: '0 4px 6px -1px rgba(16, 185, 129, 0.2)',
-                                                        '&:hover': { bgcolor: '#059669' }
-                                                    }}
-                                                >
-                                                    {formLoading ? 'Saving...' : 'Update Product ✨'}
-                                                </Button>
-                                            )}
-                                        </DialogActions>
-
                                     </form>
-                                </div>
+                                </Box>
                             </DialogContent>
+
+                            <DialogActions sx={{ px: { xs: 2, sm: 4 }, py: 3, bgcolor: '#f8fafc', borderTop: '1px solid #f1f5f9' }}>
+                                <Button 
+                                    onClick={() => (currentStep === 1 ? setShowModal(false) : setCurrentStep(prev => prev - 1))} 
+                                    color="inherit"
+                                    sx={{ 
+                                        borderRadius: '14px', 
+                                        textTransform: 'none', 
+                                        fontWeight: 700, 
+                                        px: isMobile ? 2 : 3, 
+                                        py: 1.5,
+                                        color: '#64748b',
+                                        '&:hover': { bgcolor: '#f1f5f9', color: '#1e293b' }
+                                    }}
+                                >
+                                    {currentStep === 1 ? 'Discard' : 'Back'}
+                                </Button>
+                                <Box sx={{ flex: '1 1 auto' }} />
+                                <Button
+                                    variant="contained"
+                                    onClick={currentStep === 4 ? handleEditSubmit : handleNext}
+                                    disabled={formLoading}
+                                    sx={{ 
+                                        background: '#2563eb !important',
+                                        backgroundImage: 'none !important',
+                                        '&:hover': { 
+                                            background: '#1d4ed8 !important',
+                                            backgroundImage: 'none !important',
+                                            boxShadow: '0 8px 25px -5px rgba(37, 99, 235, 0.4)'
+                                        }, 
+                                        borderRadius: '16px',
+                                        textTransform: 'none',
+                                        fontWeight: 800,
+                                        px: isMobile ? 2.5 : 3.5, 
+                                        py: 1.1,
+                                        boxShadow: '0 4px 15px -1px rgba(37, 99, 235, 0.3)',
+                                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                                    }}
+                                >
+                                    {formLoading ? (
+                                        <CircularProgress size={24} color="inherit" />
+                                    ) : currentStep === 4 ? (
+                                        'Update Product ✨'
+                                    ) : (
+                                        <Stack direction="row" spacing={1} alignItems="center">
+                                            <span>NEXT STEP</span>
+                                            <Box component="span" sx={{ fontSize: '1.2rem', mt: -0.2 }}>→</Box>
+                                        </Stack>
+                                    )}
+                                </Button>
+                            </DialogActions>
                         </Dialog>
                     )
                 }
@@ -3276,9 +3892,9 @@ const ProductDetails = () => {
                             }}
                         >
                             {/* Modal Header */}
-                            <div className="add-items-modal-header" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <h3 className="add-items-modal-title" style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center' }}>
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '10px' }}>
+                            <div className="add-items-modal-header" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'transparent', borderBottom: '1px solid #f1f5f9' }}>
+                                <h3 className="add-items-modal-title" style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center', color: '#0f172a', fontWeight: 800 }}>
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '12px' }}>
                                         {variantFormData.variantId ? (
                                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                         ) : (
@@ -3297,7 +3913,7 @@ const ProductDetails = () => {
                                     </svg>
                                     {variantFormData.variantId ? 'Edit Variant' : 'Add Items'}
                                 </h3>
-                                <IconButton onClick={handleCloseAddVariant} sx={{ color: 'white', p: 0.5 }}>
+                                <IconButton onClick={handleCloseAddVariant} sx={{ color: '#64748b', p: 0.5, '&:hover': { bgcolor: '#f1f5f9', color: '#ef4444' } }}>
                                     <CloseIcon />
                                 </IconButton>
                             </div>
@@ -4147,15 +4763,42 @@ const ProductDetails = () => {
                                                 <div className="uom-grid">
                                                     <div className="form-group-custom">
                                                         <label className="form-label-custom">Standard UoM</label>
-                                                        <input type="text" className="form-input-custom" value={variantFormData.standardUom} onChange={(e) => setVariantFormData({ ...variantFormData, standardUom: e.target.value })} />
+                                                        <select 
+                                                            className="form-input-custom" 
+                                                            value={variantFormData.standardUom}
+                                                            onChange={(e) => setVariantFormData({ ...variantFormData, standardUom: e.target.value })}
+                                                        >
+                                                            <option value="Cartons(ct)">Cartons(ct)</option>
+                                                            <option value="Case(cs)">Case(cs)</option>
+                                                            <option value="Packs(pk)">Packs(pk)</option>
+                                                            <option value="Pieces(pcs)">Pieces(pcs)</option>
+                                                        </select>
                                                     </div>
                                                     <div className="form-group-custom">
                                                         <label className="form-label-custom">Sales UoM</label>
-                                                        <input type="text" className="form-input-custom" value={variantFormData.salesUom} onChange={(e) => setVariantFormData({ ...variantFormData, salesUom: e.target.value })} />
+                                                        <select 
+                                                            className="form-input-custom" 
+                                                            value={variantFormData.salesUom}
+                                                            onChange={(e) => setVariantFormData({ ...variantFormData, salesUom: e.target.value })}
+                                                        >
+                                                            <option value="Cartons(ct)">Cartons(ct)</option>
+                                                            <option value="Case(cs)">Case(cs)</option>
+                                                            <option value="Packs(pk)">Packs(pk)</option>
+                                                            <option value="Pieces(pcs)">Pieces(pcs)</option>
+                                                        </select>
                                                     </div>
                                                     <div className="form-group-custom">
                                                         <label className="form-label-custom">Purchasing UoM</label>
-                                                        <input type="text" className="form-input-custom" value={variantFormData.purchasingUom} onChange={(e) => setVariantFormData({ ...variantFormData, purchasingUom: e.target.value })} />
+                                                        <select 
+                                                            className="form-input-custom" 
+                                                            value={variantFormData.purchasingUom}
+                                                            onChange={(e) => setVariantFormData({ ...variantFormData, purchasingUom: e.target.value })}
+                                                        >
+                                                            <option value="Cartons(ct)">Cartons(ct)</option>
+                                                            <option value="Case(cs)">Case(cs)</option>
+                                                            <option value="Packs(pk)">Packs(pk)</option>
+                                                            <option value="Pieces(pcs)">Pieces(pcs)</option>
+                                                        </select>
                                                     </div>
                                                 </div>
                                             </div>
@@ -4185,129 +4828,137 @@ const ProductDetails = () => {
                                         </div>
                                     )}
                                 </div>
-
-                                {/* Modal Footer */}
-                                <div className="add-items-modal-footer">
-                                    <button
-                                        type="button"
-                                        className="btn-prev-modern"
-                                        onClick={() => {
-                                            const tabs = ['item-details', 'photos-videos', 'inventory-details', 'accounts-details', '-pricing', 'extra-info', 'stock-movement'];
-                                            const idx = tabs.indexOf(variantActiveTab);
-                                            if (idx > 0) setVariantActiveTab(tabs[idx - 1]);
-                                            else handleCloseAddVariant();
-                                        }}
-                                        disabled={formLoading}
-                                    >
-                                        {variantActiveTab === 'item-details' ? 'Cancel Operation' : 'Previous Step'}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="btn-next-modern"
-                                        onClick={() => {
-                                            const tabs = ['item-details', 'photos-videos', 'inventory-details', 'accounts-details', '-pricing', 'extra-info', 'stock-movement'];
-                                            const effectiveTab = variantActiveTab;
-
-                                            // Validation Logic
-                                            const errors = {};
-                                            let hasError = false;
-
-                                            if (effectiveTab === 'item-details') {
-                                                const required = [
-                                                    { k: 'itemName', l: 'Item Name required' },
-                                                    { k: 'brand', l: 'Brand required' },
-                                                    { k: 'modelNo', l: 'Model No required' },
-                                                    { k: 'batchNo', l: 'Batch No required' },
-                                                    { k: 'barcode', l: 'Barcode required' },
-                                                    { k: 'shortDescription', l: 'Short Description required' },
-                                                    { k: 'longDescription', l: 'Long Description required' }
-                                                ];
-                                                required.forEach(f => {
-                                                    if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
-                                                        errors[f.k] = f.l;
-                                                        hasError = true;
-                                                    }
-                                                });
-
-                                                // Validate variants
-                                                if (variantFormData.variants && variantFormData.variants.length > 0) {
-                                                    variantFormData.variants.forEach((v, i) => {
-                                                        if (!v.name || v.name.trim() === '') {
-                                                            errors[`variant_${i}_name`] = 'Required';
-                                                            hasError = true;
-                                                        }
-                                                        if (!v.value || v.value.trim() === '') {
-                                                            errors[`variant_${i}_value`] = 'Required';
-                                                            hasError = true;
-                                                        }
-                                                    });
-                                                }
-
-                                                if (hasError) {
-                                                    setValidationErrors(errors);
-                                                    return;
-                                                }
-                                            }
-
-                                            if (effectiveTab === '-pricing') {
-                                                const required = [
-                                                    { k: 'retailPrice', l: 'Retail Price required' },
-                                                    { k: 'wholesalePrice', l: 'Wholesale Price required' },
-                                                    { k: 'onlinePrice', l: 'Online Price required' }
-                                                ];
-                                                required.forEach(f => {
-                                                    if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
-                                                        errors[f.k] = f.l;
-                                                        hasError = true;
-                                                    }
-                                                });
-
-                                                if (hasError) {
-                                                    setValidationErrors(errors);
-                                                    return;
-                                                }
-                                            }
-
-                                            if (effectiveTab === 'extra-info') {
-                                                const required = [
-                                                    { k: 'hsCode', l: 'HS Code required' },
-                                                    { k: 'countryOfOrigin', l: 'Country of Origin required' },
-                                                    { k: 'length', l: 'Length required' },
-                                                    { k: 'width', l: 'Width required' },
-                                                    { k: 'height', l: 'Height required' },
-                                                    { k: 'weight', l: 'Weight required' }
-                                                ];
-                                                required.forEach(f => {
-                                                    if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
-                                                        errors[f.k] = f.l;
-                                                        hasError = true;
-                                                    }
-                                                });
-
-                                                if (hasError) {
-                                                    setValidationErrors(errors);
-                                                    return;
-                                                }
-                                            }
-
-                                            setValidationErrors({}); // Clear errors if passed
-
-                                            const currentIdx = tabs.indexOf(effectiveTab);
-                                            if (currentIdx < tabs.length - 1) {
-                                                setVariantActiveTab(tabs[currentIdx + 1]);
-                                            } else {
-                                                // Save the product variant
-                                                handleSaveProductVariant();
-                                            }
-                                        }}
-                                        disabled={formLoading}
-                                        style={variantActiveTab === 'stock-movement' ? { background: '#10b981', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)' } : {}}
-                                    >
-                                        {formLoading ? 'Saving...' : (variantActiveTab === 'stock-movement' ? (variantFormData.variantId ? 'Update Variant ✨' : 'Save Product ✨') : 'Next Section →')}
-                                    </button>
-                                </div>
-
                             </DialogContent>
+
+                            {/* Fixed Modal Footer - Moved outside DialogContent */}
+                            <div className="add-items-modal-footer" style={{ borderTop: '1px solid #f1f5f9', background: '#f8fafc', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
+                                <button
+                                    type="button"
+                                    className="btn-prev-modern"
+                                    onClick={() => {
+                                        const tabs = ['item-details', 'photos-videos', 'inventory-details', 'accounts-details', '-pricing', 'extra-info', 'stock-movement'];
+                                        const idx = tabs.indexOf(variantActiveTab);
+                                        if (idx > 0) setVariantActiveTab(tabs[idx - 1]);
+                                        else handleCloseAddVariant();
+                                    }}
+                                    disabled={formLoading}
+                                    style={{ borderRadius: '10px', fontWeight: 700 }}
+                                >
+                                    {variantActiveTab === 'item-details' ? 'Cancel' : '← Previous'}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn-next-modern"
+                                    onClick={() => {
+                                        const tabs = ['item-details', 'photos-videos', 'inventory-details', 'accounts-details', '-pricing', 'extra-info', 'stock-movement'];
+                                        const effectiveTab = variantActiveTab;
+
+                                        // Validation Logic
+                                        const errors = {};
+                                        let hasError = false;
+
+                                        if (effectiveTab === 'item-details') {
+                                            const required = [
+                                                { k: 'itemName', l: 'Item Name required' },
+                                                { k: 'brand', l: 'Brand required' },
+                                                { k: 'modelNo', l: 'Model No required' },
+                                                { k: 'batchNo', l: 'Batch No required' },
+                                                { k: 'barcode', l: 'Barcode required' },
+                                                { k: 'shortDescription', l: 'Short Description required' },
+                                                { k: 'longDescription', l: 'Long Description required' }
+                                            ];
+                                            required.forEach(f => {
+                                                if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
+                                                    errors[f.k] = f.l;
+                                                    hasError = true;
+                                                }
+                                            });
+
+                                            // Validate variants
+                                            if (variantFormData.variants && variantFormData.variants.length > 0) {
+                                                variantFormData.variants.forEach((v, i) => {
+                                                    if (!v.name || v.name.trim() === '') {
+                                                        errors[`variant_${i}_name`] = 'Required';
+                                                        hasError = true;
+                                                    }
+                                                    if (!v.value || v.value.trim() === '') {
+                                                        errors[`variant_${i}_value`] = 'Required';
+                                                        hasError = true;
+                                                    }
+                                                });
+                                            }
+
+                                            if (hasError) {
+                                                setValidationErrors(errors);
+                                                return;
+                                            }
+                                        }
+
+                                        if (effectiveTab === '-pricing') {
+                                            const required = [
+                                                { k: 'retailPrice', l: 'Retail Price required' },
+                                                { k: 'wholesalePrice', l: 'Wholesale Price required' },
+                                                { k: 'onlinePrice', l: 'Online Price required' }
+                                            ];
+                                            required.forEach(f => {
+                                                if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
+                                                    errors[f.k] = f.l;
+                                                    hasError = true;
+                                                }
+                                            });
+
+                                            if (hasError) {
+                                                setValidationErrors(errors);
+                                                return;
+                                            }
+                                        }
+
+                                        if (effectiveTab === 'extra-info') {
+                                            const required = [
+                                                { k: 'hsCode', l: 'HS Code required' },
+                                                { k: 'countryOfOrigin', l: 'Country of Origin required' },
+                                                { k: 'length', l: 'Length required' },
+                                                { k: 'width', l: 'Width required' },
+                                                { k: 'height', l: 'Height required' },
+                                                { k: 'weight', l: 'Weight required' }
+                                            ];
+                                            required.forEach(f => {
+                                                if (!variantFormData[f.k] || variantFormData[f.k].toString().trim() === '') {
+                                                    errors[f.k] = f.l;
+                                                    hasError = true;
+                                                }
+                                            });
+
+                                            if (hasError) {
+                                                setValidationErrors(errors);
+                                                return;
+                                            }
+                                        }
+
+                                        setValidationErrors({}); // Clear errors if passed
+
+                                        const currentIdx = tabs.indexOf(effectiveTab);
+                                        if (currentIdx < tabs.length - 1) {
+                                            setVariantActiveTab(tabs[currentIdx + 1]);
+                                        } else {
+                                            // Save the product variant
+                                            handleSaveProductVariant();
+                                        }
+                                    }}
+                                    disabled={formLoading}
+                                    style={variantActiveTab === 'stock-movement' ? { 
+                                        background: '#10b981', 
+                                        boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)',
+                                        borderRadius: '10px',
+                                        fontWeight: 800
+                                    } : { 
+                                        borderRadius: '10px',
+                                        fontWeight: 800
+                                    }}
+                                >
+                                    {formLoading ? 'Saving...' : (variantActiveTab === 'stock-movement' ? (variantFormData.variantId ? 'Update Variant ✨' : 'Save Product ✨') : 'Next Step →')}
+                                </button>
+                            </div>
                         </Dialog>
                     )
                 }
@@ -4708,10 +5359,9 @@ const ProductDetails = () => {
                                             const isCreator = currentUserId && creatorId && String(currentUserId) === creatorId;
                                             const role = (user.Role || user.role || '').toLowerCase();
 
-                                            // Rule: Creator cannot Edit/Approve their own item, even if they are Admin (unless strict override)
-                                            // Admins can see everything, but to satisfy the request "one manager add items only another manager to approve/edit",
-                                            // we hide it for the creator.
-                                            if (isCreator && role !== 'admin') {
+                                            // Rule: To satisfy the request "one manager add items only another manager to approve/edit",
+                                            // we hide it for the creator. However, we'll allow Managers/Admins to see it if they need to fix something.
+                                            if (isCreator && role !== 'admin' && role !== 'manager') {
                                                 return null;
                                             }
 
@@ -4902,32 +5552,56 @@ const ProductDetails = () => {
                             maxWidth="lg"
                             fullWidth
                             PaperProps={{
-                                sx: { borderRadius: '16px', overflow: 'hidden' }
+                                sx: {
+                                    borderRadius: '12px',
+                                    overflow: 'hidden',
+                                    bgcolor: '#ffffff',
+                                    boxShadow: '0 20px 60px rgba(2,6,23,0.25)'
+                                }
                             }}
                         >
-                            <div className="add-set-modal-header" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', color: 'white' }}>
-                                <h3 style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <InventoryIcon /> Create Combo Set
+                            <div className="add-set-modal-header" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#2C3E50', color: 'white', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.08)' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', letterSpacing: '0.2px' }}>
+                                    <InventoryIcon /> {isEditingSet ? 'Edit Combo Set' : 'Create Combo Set'}
                                 </h3>
-                                <IconButton onClick={() => setShowAddSetModal(false)} sx={{ color: 'white' }}><CloseIcon /></IconButton>
+                                <IconButton onClick={() => setShowAddSetModal(false)} sx={{ color: 'white' }} aria-label="close add set modal"><CloseIcon /></IconButton>
                             </div>
 
-                            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                                <Tabs value={comboTab} onChange={(e, val) => setComboTab(val)} aria-label="combo tabs">
-                                    <Tab label="Combo Details" icon={<InventoryIcon />} iconPosition="start" />
-                                    <Tab label="Photos & Videos" icon={<PhotoLibraryIcon />} iconPosition="start" />
-                                    <Tab label="Pricing" icon={<AttachMoneyIcon />} iconPosition="start" />
-                                    <Tab label="Dimensions" icon={<CategoryIcon />} iconPosition="start" />
+                            <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f8fafc' }}>
+                                <Tabs
+                                    value={comboTab}
+                                    onChange={(e, val) => setComboTab(val)}
+                                    aria-label="combo tabs"
+                                    variant="fullWidth"
+                                    TabIndicatorProps={{ style: { height: 3, backgroundColor: '#ef4444' } }}
+                                    sx={{
+                                        '& .MuiTab-root': {
+                                            textTransform: 'none',
+                                            fontWeight: 600,
+                                            alignItems: 'center',
+                                            minHeight: 52,
+                                        },
+                                        '& .Mui-selected': {
+                                            color: '#0f172a !important'
+                                        }
+                                    }}
+                                >
+                                    <Tab label="Combo Details" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
+                                    <Tab label="Photos & Videos" icon={<PhotoLibraryIcon fontSize="small" />} iconPosition="start" />
+                                    <Tab label="Pricing" icon={<AttachMoneyIcon fontSize="small" />} iconPosition="start" />
+                                    <Tab label="Dimensions" icon={<CategoryIcon fontSize="small" />} iconPosition="start" />
                                 </Tabs>
                             </Box>
 
                             <DialogContent dividers sx={{ minHeight: '500px' }}>
                                 {comboTab === 0 && (
-                                    <Grid container spacing={3}>
+                                    <Grid container spacing={3} direction="column">
                                         <Grid item xs={12}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Combo Name:</label>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>Combo Name</label>
                                             <TextField
-                                                fullWidth size="small"
+                                                fullWidth
+                                                sx={{ width: '100% !important' }}
+                                                size="small"
                                                 variant="outlined"
                                                 placeholder="Enter combo name"
                                                 value={comboFormData.setName}
@@ -4938,24 +5612,43 @@ const ProductDetails = () => {
                                         <Grid item xs={12}>
                                             <Box sx={{ border: '1px solid #e2e8f0', borderRadius: '8px', p: 2, bgcolor: '#f8fafc' }}>
                                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                                    <Typography variant="subtitle2" fontWeight={700}>Add Items to create combo</Typography>
-                                                    <Button variant="contained" color="success" size="small" startIcon={<AddIcon />}>Add</Button>
+                                                    <Typography variant="subtitle2" fontWeight={800}>Add Items to create combo</Typography>
+                                                    <Button
+                                                        variant="contained"
+                                                        size="small"
+                                                        startIcon={<AddIcon />}
+                                                        sx={{
+                                                            bgcolor: '#ef4444',
+                                                            '&:hover': { bgcolor: '#dc2626' },
+                                                            borderRadius: '999px',
+                                                            px: 2
+                                                        }}
+                                                        onClick={() => {
+                                                            const newItems = [...comboFormData.items, { id: Date.now(), itemName: '', qty: 1 }];
+                                                            setComboFormData({ ...comboFormData, items: newItems });
+                                                        }}
+                                                    >
+                                                        Add
+                                                    </Button>
                                                 </Box>
-                                                <Autocomplete
-                                                    options={itemSearchResults}
-                                                    getOptionLabel={(option) => `${option.Itemname || option.itemname || ''} - ${option.Productname || option.productname || ''}`}
-                                                    onInputChange={handleSetItemSearch}
-                                                    onChange={(e, val) => handleAddItemToSet(val)}
-                                                    loading={isSearchingItems}
-                                                    renderInput={(params) => <TextField {...params} label="Search products..." size="small" />}
-                                                />
+                                                <Box sx={{ mb: 1 }}>
+                                                    <Autocomplete
+                                                        options={itemSearchResults}
+                                                        getOptionLabel={(option) => `${option.Itemname || option.itemname || ''} - ${option.Productname || option.productname || ''}`}
+                                                        onInputChange={handleSetItemSearch}
+                                                        onChange={(e, val) => handleAddItemToSet(val)}
+                                                        loading={isSearchingItems}
+                                                        renderInput={(params) => <TextField {...params} placeholder="Search products..." size="small" sx={{ width: '100% !important' }} />}
+                                                    />
+                                                </Box>
+                                                {/* Removed extra segmented header to avoid duplicate headers */}
                                                 <TableContainer component={Paper} elevation={0} sx={{ mt: 2, border: '1px solid #e2e8f0' }}>
                                                     <Table size="small">
                                                         <TableHead sx={{ bgcolor: '#f1f5f9' }}>
                                                             <TableRow>
                                                                 <TableCell>Item</TableCell>
                                                                 <TableCell width={120}>Qty</TableCell>
-                                                                <TableCell width={50}>Action</TableCell>
+                                                                <TableCell width={60} align="center">Action</TableCell>
                                                             </TableRow>
                                                         </TableHead>
                                                         <TableBody>
@@ -4964,7 +5657,8 @@ const ProductDetails = () => {
                                                                     <TableCell>{item.itemName}</TableCell>
                                                                     <TableCell>
                                                                         <TextField
-                                                                            type="number" size="small"
+                                                                            type="number"
+                                                                            size="small"
                                                                             value={item.qty}
                                                                             onChange={(e) => {
                                                                                 const newItems = [...comboFormData.items];
@@ -4973,7 +5667,7 @@ const ProductDetails = () => {
                                                                             }}
                                                                         />
                                                                     </TableCell>
-                                                                    <TableCell>
+                                                                    <TableCell align="center">
                                                                         <IconButton size="small" color="error" onClick={() => handleRemoveItemFromSet(idx)}><DeleteIcon /></IconButton>
                                                                     </TableCell>
                                                                 </TableRow>
@@ -4984,40 +5678,43 @@ const ProductDetails = () => {
                                             </Box>
                                         </Grid>
 
-                                        <Grid item xs={12} md={6}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Model No:</label>
+                                        <Grid item xs={12}>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>Model No</label>
                                             <TextField
                                                 fullWidth size="small"
+                                                sx={{ width: '100% !important' }}
                                                 value={comboFormData.modelNo}
                                                 onChange={e => setComboFormData({ ...comboFormData, modelNo: e.target.value })}
                                             />
                                         </Grid>
-                                        <Grid item xs={12} md={6}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Batch No:</label>
+                                        <Grid item xs={12}>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>Batch No</label>
                                             <TextField
                                                 fullWidth size="small"
+                                                sx={{ width: '100% !important' }}
                                                 value={comboFormData.batchNo}
                                                 onChange={e => setComboFormData({ ...comboFormData, batchNo: e.target.value })}
                                             />
                                         </Grid>
                                         <Grid item xs={12}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>EAN/Barcode No:</label>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>EAN/Barcode No</label>
                                             <TextField
                                                 fullWidth size="small"
+                                                sx={{ width: '100% !important' }}
                                                 value={comboFormData.ean}
                                                 onChange={e => setComboFormData({ ...comboFormData, ean: e.target.value })}
                                             />
                                         </Grid>
 
                                         <Grid item xs={12}>
-                                            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>Market Place:</Typography>
-                                            <TableContainer component={Paper} variant="outlined">
+                                            <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1 }}>Market Place</Typography>
+                                            <TableContainer component={Paper} variant="outlined" sx={{ '& .MuiTableRow-root:nth-of-type(even)': { bgcolor: '#fafafa' } }}>
                                                 <Table size="small">
                                                     <TableBody>
                                                         {comboFormData.marketPlaces.map((mp, idx) => (
                                                             <TableRow key={idx}>
-                                                                <TableCell sx={{ borderRight: '1px solid #eee', width: '150px' }}>{mp.name}</TableCell>
-                                                                <TableCell align="center" sx={{ width: '50px', borderRight: '1px solid #eee' }}>
+                                                                <TableCell sx={{ borderRight: '1px solid #eee', width: '150px', fontWeight: 600 }}>{mp.name}</TableCell>
+                                                                <TableCell align="center" sx={{ width: '60px', borderRight: '1px solid #eee' }}>
                                                                     <input
                                                                         type="checkbox"
                                                                         checked={mp.selected}
@@ -5031,6 +5728,7 @@ const ProductDetails = () => {
                                                                 <TableCell>
                                                                     <TextField
                                                                         fullWidth size="small" placeholder="Link"
+                                                                        sx={{ width: '100% !important' }}
                                                                         value={mp.link}
                                                                         onChange={e => {
                                                                             const newMps = [...comboFormData.marketPlaces];
@@ -5039,7 +5737,12 @@ const ProductDetails = () => {
                                                                         }}
                                                                         disabled={!mp.selected}
                                                                         variant="standard"
-                                                                        InputProps={{ disableUnderline: true }}
+                                                                        InputProps={{
+                                                                            disableUnderline: true,
+                                                                            sx: {
+                                                                                color: mp.selected ? 'inherit' : '#94a3b8'
+                                                                            }
+                                                                        }}
                                                                     />
                                                                 </TableCell>
                                                             </TableRow>
@@ -5050,17 +5753,21 @@ const ProductDetails = () => {
                                         </Grid>
 
                                         <Grid item xs={12}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Short Description:</label>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>Short Description</label>
                                             <TextField
                                                 fullWidth size="small"
+                                                multiline
+                                                rows={3}
+                                                sx={{ width: '100% !important', display: 'block' }}
                                                 value={comboFormData.shortDescription}
                                                 onChange={e => setComboFormData({ ...comboFormData, shortDescription: e.target.value })}
                                             />
                                         </Grid>
                                         <Grid item xs={12}>
-                                            <label style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Long Description:</label>
+                                            <label style={{ fontWeight: 700, display: 'block', marginBottom: '8px' }}>Long Description</label>
                                             <TextField
-                                                fullWidth multiline rows={4}
+                                                fullWidth multiline rows={6}
+                                                sx={{ width: '100% !important', display: 'block' }}
                                                 value={comboFormData.description}
                                                 onChange={e => setComboFormData({ ...comboFormData, description: e.target.value })}
                                             />
@@ -5075,54 +5782,76 @@ const ProductDetails = () => {
                                                 <Typography variant="subtitle1" fontWeight={600}>Product Medias</Typography>
                                                 <IconButton size="small"><CloseIcon fontSize="small" /></IconButton>
                                             </Box>
+
                                             <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-                                                <Button variant="contained" size="small" sx={{ bgcolor: '#dc2626' }}>Photo</Button>
-                                                <Button variant="outlined" size="small">Video</Button>
+                                                <Button
+                                                    variant={mediaTab === 'photo' ? 'contained' : 'outlined'}
+                                                    size="small"
+                                                    sx={{ bgcolor: mediaTab === 'photo' ? '#dc2626' : undefined, color: mediaTab === 'photo' ? '#fff' : undefined }}
+                                                    onClick={() => setMediaTab('photo')}
+                                                >
+                                                    Photo
+                                                </Button>
+                                                <Button
+                                                    variant={mediaTab === 'video' ? 'contained' : 'outlined'}
+                                                    size="small"
+                                                    sx={{ bgcolor: mediaTab === 'video' ? '#dc2626' : undefined, color: mediaTab === 'video' ? '#fff' : undefined }}
+                                                    onClick={() => setMediaTab('video')}
+                                                >
+                                                    Video
+                                                </Button>
                                             </Stack>
-                                            <Typography variant="body2" gutterBottom>Add gallery (jpeg/png)</Typography>
-                                            <input
-                                                type="file" multiple accept="image/*"
-                                                id="combo-photo-upload" style={{ display: 'none' }}
-                                                onChange={(e) => handleFileChange(e, 'image')}
-                                            />
-                                            <label htmlFor="combo-photo-upload">
-                                                <Button variant="contained" component="span" sx={{ bgcolor: '#059669' }}>Select Attachment</Button>
-                                            </label>
 
-                                            <Grid container spacing={1} sx={{ mt: 2 }}>
-                                                {comboFormData.imageFiles.map((img, idx) => (
-                                                    <Grid item key={idx}>
-                                                        <Box sx={{ position: 'relative', width: 80, height: 80, border: '1px solid #ddd', borderRadius: 1, overflow: 'hidden' }}>
-                                                            <img src={img.preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                            <IconButton
-                                                                size="small"
-                                                                sx={{ position: 'absolute', top: 0, right: 0, bgcolor: 'rgba(255,255,255,0.7)' }}
-                                                                onClick={() => {
-                                                                    const newImages = comboFormData.imageFiles.filter((_, i) => i !== idx);
-                                                                    setComboFormData({ ...comboFormData, imageFiles: newImages });
-                                                                }}
-                                                            >
-                                                                <DeleteIcon fontSize="inherit" color="error" />
-                                                            </IconButton>
-                                                        </Box>
+                                            {mediaTab === 'photo' && (
+                                                <Box>
+                                                    <Typography variant="body2" gutterBottom>Add gallery (jpeg/png)</Typography>
+                                                    <input
+                                                        type="file" multiple accept="image/*"
+                                                        id="combo-photo-upload" style={{ display: 'none' }}
+                                                        onChange={(e) => handleFileChange(e, 'image')}
+                                                    />
+                                                    <label htmlFor="combo-photo-upload">
+                                                        <Button variant="contained" component="span" sx={{ bgcolor: '#059669' }}>Select Attachment</Button>
+                                                    </label>
+
+                                                    <Grid container spacing={1} sx={{ mt: 2 }}>
+                                                        {comboFormData.imageFiles.map((img, idx) => (
+                                                            <Grid item key={idx}>
+                                                                <Box sx={{ position: 'relative', width: 80, height: 80, border: '1px solid #ddd', borderRadius: 1, overflow: 'hidden' }}>
+                                                                    <img src={img.preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                                    <IconButton
+                                                                        size="small"
+                                                                        sx={{ position: 'absolute', top: 0, right: 0, bgcolor: 'rgba(255,255,255,0.7)' }}
+                                                                        onClick={() => {
+                                                                            const newImages = comboFormData.imageFiles.filter((_, i) => i !== idx);
+                                                                            setComboFormData({ ...comboFormData, imageFiles: newImages });
+                                                                        }}
+                                                                    >
+                                                                        <DeleteIcon fontSize="inherit" color="error" />
+                                                                    </IconButton>
+                                                                </Box>
+                                                            </Grid>
+                                                        ))}
                                                     </Grid>
-                                                ))}
-                                            </Grid>
+                                                </Box>
+                                            )}
 
-                                            <Box sx={{ mt: 3 }}>
-                                                <Typography variant="body2" gutterBottom>Add videos</Typography>
-                                                <input
-                                                    type="file" multiple accept="video/*"
-                                                    id="combo-video-upload" style={{ display: 'none' }}
-                                                    onChange={(e) => handleFileChange(e, 'video')}
-                                                />
-                                                <label htmlFor="combo-video-upload">
-                                                    <Button variant="contained" component="span" color="primary">Upload Videos</Button>
-                                                </label>
-                                                <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                                                    {comboFormData.videoFiles.length} video(s) selected
-                                                </Typography>
-                                            </Box>
+                                            {mediaTab === 'video' && (
+                                                <Box>
+                                                    <Typography variant="body2" gutterBottom>Add videos</Typography>
+                                                    <input
+                                                        type="file" multiple accept="video/*"
+                                                        id="combo-video-upload" style={{ display: 'none' }}
+                                                        onChange={(e) => handleFileChange(e, 'video')}
+                                                    />
+                                                    <label htmlFor="combo-video-upload">
+                                                        <Button variant="contained" component="span" color="primary">Upload Videos</Button>
+                                                    </label>
+                                                    <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                                                        {comboFormData.videoFiles.length} video(s) selected
+                                                    </Typography>
+                                                </Box>
+                                            )}
                                         </Box>
                                     </Box>
                                 )}
@@ -5218,15 +5947,26 @@ const ProductDetails = () => {
                                 )}
                             </DialogContent>
                             <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
-                                <Button onClick={() => setShowAddSetModal(false)} disabled={formLoading}>Cancel</Button>
+                                <Button
+                                    onClick={() => setShowAddSetModal(false)}
+                                    disabled={formLoading}
+                                    sx={{ color: '#475569' }}
+                                >
+                                    Cancel
+                                </Button>
                                 <Button
                                     onClick={handleSaveSet}
                                     variant="contained"
-                                    color="primary"
                                     disabled={formLoading}
                                     startIcon={formLoading ? <CircularProgress size={20} color="inherit" /> : <CheckCircleIcon />}
+                                    sx={{
+                                        bgcolor: '#ef4444',
+                                        '&:hover': { bgcolor: '#dc2626' },
+                                        fontWeight: 700,
+                                        borderRadius: '8px'
+                                    }}
                                 >
-                                    {formLoading ? 'Saving...' : 'Save Combo Set'}
+                                    {formLoading ? 'Saving...' : (isEditingSet ? 'Update Combo Set' : 'Save Combo Set')}
                                 </Button>
                             </DialogActions>
                         </Dialog>

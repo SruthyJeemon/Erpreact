@@ -28,6 +28,7 @@
     "@hello-pangea/dnd": "^18.0.1",
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
+    "@mui/x-data-grid": "^8.28.2",
     "@mui/x-date-pickers": "^8.27.0",
     "dayjs": "^1.11.19",
     "html2canvas": "^1.4.1",

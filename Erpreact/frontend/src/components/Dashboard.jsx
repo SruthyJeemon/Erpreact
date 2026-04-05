@@ -57,6 +57,7 @@ import StockTransferApprovalView from './StockTransferApprovalView';
 import StockTransferApprovalFinal from './StockTransferApprovalFinal';
 import StockAdjustmentSection from './StockAdjustmentSection';
 import StockAdjustmentApprovalSection from './StockAdjustmentApprovalSection';
+import PackingListSection from './PackingListSection';
 
 
 
@@ -183,17 +184,31 @@ const SUBMODULE_SECTION_MAPPING = {
   'inventory-stock': 'inventory-stock',
   'stock': 'inventory-stock',
   'inventory': 'inventory-stock',
+
+  // Task and Listing - ensure visibility/mapping even if names vary
+  'task': 'task-dashboard',
+  'tasks': 'task-dashboard',
+  'task dashboard': 'task-dashboard',
+  'taskdashboard': 'task-dashboard',
+  'listing': 'Task/Listing',
+  'task listing': 'Task/Listing',
+  'task-listing': 'Task/Listing',
+  'listing tasks': 'Task/Listing',
+
+  // Packing list under Stock
+  'packing list': 'stock-packinglist',
+  'packinglist': 'stock-packinglist',
+  'stock packinglist': 'stock-packinglist',
+  'stock-packinglist': 'stock-packinglist',
+
   'inventory-costing': 'inventory-costing',
   'costing': 'inventory-costing',
   'inventory-stocktransfer': 'inventory-stocktransfer',
   'stock transfer': 'inventory-stocktransfer',
   'stocktransfer': 'inventory-stocktransfer',
-
-  'task-dashboard': 'task-dashboard',
   'inventory-stockadjustment': 'inventory-stockadjustment',
   'stock adjustment': 'inventory-stockadjustment',
   'stockadjustment': 'inventory-stockadjustment',
-  'taskdashboard': 'task-dashboard',
   'profile': 'admin-profile',
   'security': 'admin-security',
   'role management': 'admin-roles',
@@ -590,7 +605,8 @@ const Dashboard = () => {
   // Sync activeSection with URL changes
   useEffect(() => {
     const path = location.pathname;
-    const section = path === '/' || path === '' ? 'dashboard' : path.replace(/^\//, '').replace(/\/$/, '');
+    const decodedPath = decodeURIComponent(path || '');
+    const section = decodedPath === '/' || decodedPath === '' ? 'dashboard' : decodedPath.replace(/^\//, '').replace(/\/$/, '');
     const normalizedSection = SUBMODULE_SECTION_MAPPING[section] || section;
     if (normalizedSection !== activeSection) {
       setActiveSection(normalizedSection);
@@ -974,21 +990,10 @@ const Dashboard = () => {
     return type === 'module' ? 'warehouse' : 'default';
   };
 
-  // Update URL when activeSection changes (using proper navigate)
-  useEffect(() => {
-    const currentPath = window.location.pathname;
-    // Normalize paths by removing trailing slashes for comparison
-    const normalizedCurrent = currentPath === '/' ? '/' : currentPath.replace(/\/$/, '');
-    const expectedPath = activeSection === 'dashboard' ? '/' : `/${activeSection}`;
-
-    if (normalizedCurrent !== expectedPath) {
-      console.log('Navigating to:', expectedPath, 'Keeping search:', window.location.search);
-      navigate({
-        pathname: expectedPath,
-        search: window.location.search
-      });
-    }
-  }, [activeSection, navigate]);
+  // We intentionally avoid forcing URL navigation from state here to prevent
+  // back-button loops. Handlers that change sections will call navigate()
+  // directly, while this component listens to URL changes via useLocation
+  // and updates state accordingly (see the effect above).
 
   // Listen for browser back/forward buttons - Logic removed to prevent conflict with React Router
   // React Router's useLocation hook (above) already creates the necessary side effects.
@@ -1245,6 +1250,17 @@ const Dashboard = () => {
             ];
           }
 
+          // Restrict Packinglist visibility to Warehouse staff only
+          if (submenus && submenus.length > 0) {
+            const roleNameLower = (userRole || '').toString().toLowerCase();
+            submenus = submenus.filter(sm => {
+              if ((sm.id || '').toLowerCase() === 'stock-packinglist') {
+                return roleNameLower === 'warehouse staff' || roleNameLower === 'warehouse' || roleNameLower === 'warehouse-staff';
+              }
+              return true;
+            });
+          }
+
           menuItemsList.push({
             id: menuId,
             label: moduleName,
@@ -1397,6 +1413,21 @@ const Dashboard = () => {
             });
           }
 
+          // Set Approval (Managers only)
+          const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+          const currentRole = (currentUser.Role || currentUser.role || '').toString().toLowerCase();
+          const isManagerOnly = currentRole.includes('manager') && !currentRole.includes('admin');
+          const hasSetApproval = approvalsModule.submenus.some(sm =>
+            sm.id === 'set-approval' || (sm.label || '').toLowerCase().includes('set approval')
+          );
+          if (!hasSetApproval && (currentRole.includes('manager') || currentRole.includes('admin'))) {
+            approvalsModule.submenus.push({
+              id: 'set-approval',
+              label: 'Set Approval',
+              icon: getIconForMenu('Approvals', 'submodule')
+            });
+          }
+
           // Product Approval Request
           const hasProductApproval = approvalsModule.submenus.some(sm =>
             sm.id === 'approval-product-request' || sm.label.toLowerCase().includes('approval request')
@@ -1418,6 +1449,20 @@ const Dashboard = () => {
               id: 'approval-product-edit',
               label: 'Edit Request',
               icon: getIconForMenu('Edit Request', 'submodule')
+            });
+          }
+
+          // Set Approvals (Managers only)
+          const roleLowerForSet = (user?.Role || user?.role || '').toString().toLowerCase();
+          const isManagerRole = roleLowerForSet.includes('manager');
+          const hasSetApprovals = approvalsModule.submenus.some(sm =>
+            sm.id === 'set-approvals' || (sm.label || '').toLowerCase().includes('set approvals')
+          );
+          if (isManagerRole && !hasSetApprovals) {
+            approvalsModule.submenus.push({
+              id: 'set-approvals',
+              label: 'Set Approvals',
+              icon: getIconForMenu('Approvals', 'submodule')
             });
           }
         }
@@ -2368,6 +2413,19 @@ const Dashboard = () => {
               <CategorySection />
             </div>
           )}
+
+        {(activeSection === 'stock-packinglist') && (
+          <div className="admin-page-container">
+            {(() => {
+              const currentUser = user || {};
+              const userRoleName = (currentUser.Role || currentUser.role || '').toString().toLowerCase();
+              if (userRoleName !== 'warehouse staff' && userRoleName !== 'warehouse' && userRoleName !== 'warehouse-staff') {
+                return <div style={{ padding: 16, color: '#b91c1c' }}>Access denied: Warehouse staff only.</div>;
+              }
+              return <PackingListSection />;
+            })()}
+          </div>
+        )}
 
         {(activeSection === 'product-items' ||
           activeSection === 'product-details/items' ||

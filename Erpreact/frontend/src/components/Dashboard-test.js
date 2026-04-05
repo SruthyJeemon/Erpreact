@@ -434,9 +434,10 @@ const Dashboard = () => {
     const expectedPath = activeSection === 'dashboard' ? '/' : `/${activeSection}`;
 
     // Only update if URL doesn't match current section
-    if (currentPath !== expectedPath) {
+    if ((currentPath || '').toLowerCase() !== (expectedPath || '').toLowerCase()) {
       const newPath = activeSection === 'dashboard' ? '/' : `/${activeSection}`;
-      window.history.pushState({ section: activeSection }, '', newPath);
+      // Use replaceState to avoid polluting history and breaking back button
+      window.history.replaceState({ section: activeSection }, '', newPath);
       console.log('URL updated to:', newPath, 'for section:', activeSection);
     }
   }, [activeSection]);
@@ -445,12 +446,15 @@ const Dashboard = () => {
   useEffect(() => {
     const handlePopState = (event) => {
       const section = event.state?.section || getInitialSection();
-      setActiveSection(section);
+      // Guard against triggering state updates that would immediately rewrite the URL
+      if (section && section !== activeSection) {
+        setActiveSection(section);
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [activeSection]);
 
   // Fetch role-based modules and submodules
   useEffect(() => {
@@ -882,7 +886,7 @@ const Dashboard = () => {
             console.log('Auto-selecting first submenu:', firstSubmenu);
             setActiveSection(firstSubmenu.id);
             const newPath = `/${firstSubmenu.id}`;
-            window.history.pushState({ section: firstSubmenu.id }, '', newPath);
+            window.history.replaceState({ section: firstSubmenu.id }, '', newPath);
           }
         }, 200);
       } else {
@@ -895,7 +899,7 @@ const Dashboard = () => {
       setActiveSection(sectionId);
       // Update URL
       const newPath = sectionId === 'dashboard' ? '/' : `/${sectionId}`;
-      window.history.pushState({ section: sectionId }, '', newPath);
+      window.history.replaceState({ section: sectionId }, '', newPath);
       // Close sidebar on mobile after selection
       if (window.innerWidth <= 768) {
         setSidebarOpen(false);
@@ -912,7 +916,7 @@ const Dashboard = () => {
 
     // Update URL
     const newPath = submenuId === 'dashboard' ? '/' : `/${submenuId}`;
-    window.history.pushState({ section: submenuId }, '', newPath);
+    window.history.replaceState({ section: submenuId }, '', newPath);
 
     // Close sidebar on mobile after selection
     if (window.innerWidth <= 768) {

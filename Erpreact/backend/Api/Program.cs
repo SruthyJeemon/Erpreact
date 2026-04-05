@@ -6121,13 +6121,15 @@ app.MapDelete("/api/category/{id}", async (int id, SqlConnection connection) =>
 .WithOpenApi();
 
 // GET: Fetch products with filtering
-app.MapGet("/api/product", async (int? page, int? pageSize, string? search, string? userid, string? status, SqlConnection connection) =>
+app.MapGet("/api/product", async (int? page, int? pageSize, string? search, string? userid, string? status, string? catelogid, SqlConnection connection) =>
 {
     var products = new List<dynamic>();
     int totalCount = 0;
     
     try
     {
+        int p = page ?? 1;
+        int ps = pageSize ?? 10;
         await connection.OpenAsync();
 
         // 1. Fetch Data
@@ -6140,8 +6142,9 @@ app.MapGet("/api/product", async (int? page, int? pageSize, string? search, stri
             WHERE p.Isdelete = 0
             AND (
                 @Userid = 'ADMIN' 
-                OR p.Userid = @Userid
-                OR (@Userid IS NULL OR @Userid = '')
+                OR CAST(u.Catelogid AS VARCHAR(50)) = @Catelogid
+                OR (u.Catelogid IS NOT NULL AND @Catelogid LIKE '%' + CAST(u.Catelogid AS VARCHAR(50)) + '%')
+                OR (@Catelogid IS NULL OR @Catelogid = '')
             )";
 
         if (!string.IsNullOrEmpty(status)) {
@@ -6161,50 +6164,51 @@ app.MapGet("/api/product", async (int? page, int? pageSize, string? search, stri
 
         using (var command = new SqlCommand(sql, connection))
         {
-            int p = page ?? 1;
-            int ps = pageSize ?? 10;
-            
             command.Parameters.AddWithValue("@Userid", userid ?? "");
+            command.Parameters.AddWithValue("@Catelogid", catelogid ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Search", "%" + search + "%");
             command.Parameters.AddWithValue("@Status", status ?? (object)DBNull.Value);
             command.Parameters.AddWithValue("@Skip", (p - 1) * ps);
             command.Parameters.AddWithValue("@Take", ps);
             
-            using var reader = await command.ExecuteReaderAsync();
-
-        while (await reader.ReadAsync())
-        {
-            products.Add(new
+            using (var reader = await command.ExecuteReaderAsync())
             {
-                Id = reader["id"],
-                Product_id = reader["Product_id"],
-                Brand_name = reader["BrandName"] == DBNull.Value ? null : reader["BrandName"].ToString(),
-                Category_id = reader["Category_id"] == DBNull.Value ? null : reader["Category_id"].ToString(),
-                FullCategoryName = reader["CategoryName"] == DBNull.Value ? null : reader["CategoryName"].ToString(),
-                Product_name = reader["Product_name"],
-                Product_Status = reader["Product_Status"],
-                Product_uploaddate = reader["Product_uploaddate"],
-                Priority = reader["Priority"],
-                Product_Description = reader["Product_Description"] == DBNull.Value ? null : reader["Product_Description"].ToString(),
-                Task_description = reader["Task_description"] == DBNull.Value ? null : reader["Task_description"].ToString(),
-                Userid = reader["Userid"] == DBNull.Value ? null : reader["Userid"].ToString(),
-                CreatorRole = reader["CreatorRole"] == DBNull.Value ? "User" : reader["CreatorRole"].ToString(),
-                CreatorName = reader["CreatorName"] == DBNull.Value ? "Unknown" : reader["CreatorName"].ToString(),
-                Approved_Status = reader["Approved_Status"] == DBNull.Value ? "0" : reader["Approved_Status"].ToString(),
-                approved_status = reader["Approved_Status"] == DBNull.Value ? "0" : reader["Approved_Status"].ToString()
-            });
+                while (await reader.ReadAsync())
+                {
+                    var item = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                    for (int i = 0; i < reader.FieldCount; i++)
+                    {
+                        var name = reader.GetName(i).ToLower();
+                        var value = reader.GetValue(i);
+                        item[name] = value == DBNull.Value ? null : value;
+                    }
+                    
+                    // Add snake_case aliases for frontend compatibility
+                    if (item.ContainsKey("product_name")) item["product_name"] = item["product_name"];
+                    if (item.ContainsKey("product_id")) item["product_id"] = item["product_id"];
+                    if (item.ContainsKey("brand_name")) item["brand_name"] = item["brand_name"];
+                    if (item.ContainsKey("brandname")) item["brand_name"] = item["brandname"];
+                    if (item.ContainsKey("brand_id")) item["brand_id"] = item["brand_id"];
+                    if (item.ContainsKey("category_id")) item["category_id"] = item["category_id"];
+                    if (item.ContainsKey("categoryname")) item["categoryname"] = item["categoryname"];
+                    if (item.ContainsKey("creatorname")) item["creatorname"] = item["creatorname"];
+                    if (item.ContainsKey("creatorrole")) item["creatorrole"] = item["creatorrole"];
+                    
+                    products.Add(item);
+                }
+            }
         }
-        } // End command using block
 
-        // 2. Fetch Total Count for Pagination
         var countSql = @"
             SELECT COUNT(*) 
             FROM Tbl_Product p
+            LEFT JOIN Tbl_Registration u ON p.Userid = u.Userid
             WHERE p.Isdelete = 0
             AND (
                 @Userid = 'ADMIN' 
-                OR p.Userid = @Userid
-                OR (@Userid IS NULL OR @Userid = '')
+                OR CAST(u.Catelogid AS VARCHAR(50)) = @Catelogid
+                OR (u.Catelogid IS NOT NULL AND @Catelogid LIKE '%' + CAST(u.Catelogid AS VARCHAR(50)) + '%')
+                OR (@Catelogid IS NULL OR @Catelogid = '')
             )";
 
         if (!string.IsNullOrEmpty(search)) {
@@ -6222,22 +6226,24 @@ app.MapGet("/api/product", async (int? page, int? pageSize, string? search, stri
         using (var countCmd = new SqlCommand(countSql, connection))
         {
             countCmd.Parameters.AddWithValue("@Userid", userid ?? "");
+            countCmd.Parameters.AddWithValue("@Catelogid", catelogid ?? (object)DBNull.Value);
             countCmd.Parameters.AddWithValue("@Search", "%" + search + "%");
             countCmd.Parameters.AddWithValue("@Status", status ?? (object)DBNull.Value);
-            totalCount = (int)await countCmd.ExecuteScalarAsync();
+            var resultObj = await countCmd.ExecuteScalarAsync();
+            totalCount = Convert.ToInt32(resultObj ?? 0);
         }
 
         return Results.Ok(new { 
             data = products, 
             totalCount = totalCount,
-            page = page ?? 1,
-            pageSize = pageSize ?? 10,
-            totalPages = (int)Math.Ceiling((double)totalCount / (pageSize ?? 10))
+            page = p,
+            pageSize = ps,
+            totalPages = ps > 0 ? (int)Math.Ceiling((double)totalCount / ps) : 1
         });
     }
     catch (Exception ex)
     {
-        return Results.Problem($"Error fetching products: {ex.Message}");
+        return Results.Json(new { Success = false, Message = ex.Message, Trace = ex.StackTrace });
     }
     finally
     {
@@ -6709,6 +6715,34 @@ app.MapGet("/api/product/gallery/{productId}", async (string productId, SqlConne
 .WithName("GetProductGallery")
 .WithOpenApi();
 
+// DELETE: Delete single gallery item
+app.MapDelete("/api/product/gallery/{id}", async (int id, SqlConnection connection) =>
+{
+    try
+    {
+        await connection.OpenAsync();
+        using var command = new SqlCommand("DELETE FROM Tbl_Gallery WHERE id = @Id", connection);
+        command.Parameters.AddWithValue("@Id", id);
+        int rows = await command.ExecuteNonQueryAsync();
+        
+        if (rows > 0)
+            return Results.Ok(new { Success = true, Message = "Gallery item deleted successfully" });
+        else
+            return Results.NotFound(new { Success = false, Message = "Gallery item not found" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+    finally
+    {
+        if (connection.State == System.Data.ConnectionState.Open) await connection.CloseAsync();
+    }
+})
+.WithName("DeleteGalleryItem")
+.WithOpenApi();
+
+/*
 // GET: Fetch Product Variants
 app.MapGet("/api/product/variants/{productId}", async (string productId, SqlConnection connection) =>
 {
@@ -6720,54 +6754,75 @@ app.MapGet("/api/product/variants/{productId}", async (string productId, SqlConn
         // Optimized query matching the specific fields and logic requested (STUFF for concatenation)
         // Improved JOIN to handle cases where Userid might be the string ID or the integer primary key
         var query = @"
-            SELECT 
-                p.Id,
-                p.Userid,
-                p.Productid,
-                p.Productname,
-                (STUFF((
-                    SELECT ', ' + CONVERT(VARCHAR(100), v.Varianttype) + '-' + CONVERT(VARCHAR(100), v.Value)
-                    FROM Tbl_Productvariants v
-                    WHERE (v.Parentid = p.Id OR v.Id = p.Id) AND v.Isdelete = 0
-                    FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, '')
-                ) AS allvalues,
-                p.Totalqty,
-                p.Noofqty_online,
-                p.Status,
-                b.Brand,
-                COALESCE(r.Firstname, r2.Firstname, p.Userid) as Username,
-                p.Modelno,
-                p.Warehousecheck,
-                p.Batchno,
-                p.EANBarcodeno,
-                p.Managerapprovestatus,
-                p.Warehouseapprovestatus,
-                p.Accountsapprovestatus,
-                p.Description,
-                p.Itemname,
-                p.Wholesaleprice,
-                p.Retailprice,
-                p.Onlineprice,
-                p.Short_description,
-                p.Length,
-                p.Width,
-                p.Height,
-                p.Weight,
-                p.Standarduom,
-                p.Salesuom,
-                p.Purchaseuom,
-                p.Hscode,
-                p.Country_orgin,
-                p.Remarks,
-                p.Brandid
-            FROM Tbl_Productvariants p
-            LEFT JOIN Tbl_Registration r ON p.Userid = r.Userid 
-            LEFT JOIN Tbl_Registration r2 ON (ISNUMERIC(p.Userid) = 1 AND p.Userid = CAST(r2.id AS VARCHAR(50)))
-            LEFT JOIN Tbl_Brand b ON p.Brandid = b.Brand_id 
-            WHERE p.Isdelete = 0 
-              AND p.Productid = @Pid 
-              AND p.Parentid = 0
-            ORDER BY p.Id ASC;";
+            DECLARE @TargetPid VARCHAR(50) = @Pid;
+            CREATE TABLE #TempResults12 (
+                Id INT,
+                Userid VARCHAR(50),
+                Productid VARCHAR(50),
+                Productname VARCHAR(50),
+                allvalues VARCHAR(MAX),
+                Totalqty VARCHAR(50),
+                Noofqty_online VARCHAR(50),
+                Status VARCHAR(50),
+                Brand VARCHAR(50),
+                Firstname VARCHAR(50),
+                Modelno VARCHAR(50),
+                Warehousecheck VARCHAR(50),
+                Batchno VARCHAR(50),
+                EANBarcodeno VARCHAR(50),
+                Managerapprovestatus VARCHAR(50),
+                Warehouseapprovestatus varchar(50),
+                Accountsapprovestatus varchar(50),
+                Description varchar(max),
+                Itemname varchar(max),
+                Wholesaleprice varchar(max),
+                Retailprice varchar(max),
+                Onlineprice varchar(max)
+            );
+
+            DECLARE @CurrentParentId INT;
+            DECLARE curs CURSOR FOR  
+               SELECT Id
+               FROM Tbl_Productvariants
+               WHERE Isdelete = 0 
+                 AND LTRIM(RTRIM(Productid)) LIKE '%' + LTRIM(RTRIM(@TargetPid)) + '%'
+                 AND (Parentid = 0 OR Parentid = '' OR Parentid IS NULL OR ISNUMERIC(Parentid) = 0 OR TRY_CAST(Parentid AS BIGINT) = 0);
+
+            OPEN curs;
+            FETCH NEXT FROM curs INTO @CurrentParentId;
+
+            WHILE @@FETCH_STATUS = 0
+            BEGIN
+                INSERT INTO #TempResults12 (
+                    allvalues, Id, Userid, Productid, Productname, Totalqty, Noofqty_online, Status, Brand, Firstname,
+                    Modelno, Warehousecheck, Batchno, EANBarcodeno, Managerapprovestatus, Warehouseapprovestatus,
+                    Accountsapprovestatus, Description, Itemname, Wholesaleprice, Retailprice, Onlineprice
+                )
+                SELECT TOP 1  
+                    (STUFF((
+                        SELECT ', ' + CONVERT(VARCHAR(100), Varianttype) + '-' + CONVERT(VARCHAR(100), Value)
+                        FROM Tbl_Productvariants
+                        WHERE (TRY_CAST(Parentid AS BIGINT) = @CurrentParentId OR Id = @CurrentParentId) AND (Isdelete=0)
+                        FOR XML PATH('')
+                    ), 1, 2, '')),
+                    v.Id, v.Userid, v.Productid, v.Productname, v.Totalqty, v.Noofqty_online, v.Status, 
+                    b.Brand, r.Firstname, v.Modelno, v.Warehousecheck, v.Batchno, v.EANBarcodeno,
+                    v.Managerapprovestatus, v.Warehouseapprovestatus, v.Accountsapprovestatus, v.Description, v.Itemname,
+                    v.Wholesaleprice, v.Retailprice, v.Onlineprice
+                FROM Tbl_Productvariants v
+                LEFT JOIN Tbl_Registration r ON v.Userid = r.Userid 
+                LEFT JOIN Tbl_Brand b on v.Brandid = b.Brand_id 
+                WHERE v.Id = @CurrentParentId
+                ORDER BY v.Id ASC;
+
+                FETCH NEXT FROM curs INTO @CurrentParentId;
+            END
+
+            CLOSE curs;
+            DEALLOCATE curs;
+
+            SELECT * FROM #TempResults12;
+            DROP TABLE #TempResults12;";
 
         using var command = new SqlCommand(query, connection);
         command.Parameters.AddWithValue("@Pid", productId);
@@ -6785,7 +6840,7 @@ app.MapGet("/api/product/variants/{productId}", async (string productId, SqlConn
                 VariantsAndValues = reader["allvalues"] == DBNull.Value ? "" : reader["allvalues"].ToString(),
                 Totalqty = reader["Totalqty"] == DBNull.Value ? "0" : reader["Totalqty"].ToString(),
                 Brand = reader["Brand"] == DBNull.Value ? "N/A" : reader["Brand"].ToString(),
-                Username = reader["Username"] == DBNull.Value ? "Unknown" : reader["Username"].ToString(),
+                Username = reader["Firstname"] == DBNull.Value ? "Unknown" : reader["Firstname"].ToString(),
                 Status = reader["Status"] == DBNull.Value ? "Inactive" : reader["Status"].ToString(),
                 ManagerStatus = reader["Managerapprovestatus"] == DBNull.Value ? "Pending" : reader["Managerapprovestatus"].ToString(),
                 WarehouseStatus = reader["Warehouseapprovestatus"] == DBNull.Value ? "Pending" : reader["Warehouseapprovestatus"].ToString(),
@@ -6896,6 +6951,7 @@ app.MapGet("/api/product/variants/{productId}", async (string productId, SqlConn
 })
 .WithName("GetProductVariants")
 .WithOpenApi();
+*/
 
 // POST: Approve Product
 app.MapPost("/api/product/approve/{id}", async (string id, HttpRequest request, SqlConnection connection) => {

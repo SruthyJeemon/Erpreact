@@ -99,8 +99,10 @@ const ComboSection = () => {
     const fetchCombos = async () => {
         setLoading(true);
         try {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const catId = user.Catelogid || user.catelogid || '';
             const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
-            const res = await fetch(`${API_URL}/api/product/getproductitemdetailsfull?pageIndex=${page + 1}&pageSize=${rowsPerPage}&itemname=${encodeURIComponent(searchTerm)}`);
+            const res = await fetch(`${API_URL}/api/product/getproductitemdetailsfull?pageIndex=${page + 1}&pageSize=${rowsPerPage}&itemname=${encodeURIComponent(searchTerm)}&catelogid=${catId}`);
             const data = await res.json();
             setCombos(Array.isArray(data) ? data : (data.List1 || data.list1 || data || []));
             setTotalRecords(data.totalRecords || (Array.isArray(data) ? data.length : 0));

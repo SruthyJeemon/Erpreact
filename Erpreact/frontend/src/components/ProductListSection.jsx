@@ -42,7 +42,9 @@ import {
     Grid,
     Autocomplete,
     useMediaQuery,
-    useTheme
+    useTheme,
+    Tabs,
+    Tab
 } from '@mui/material';
 
 
@@ -63,6 +65,11 @@ import ExitToAppIcon from '@mui/icons-material/ExitToApp';
 import CloseIcon from '@mui/icons-material/Close';
 import Description from '@mui/icons-material/Description';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
 
 
 const ProductListSection = () => {
@@ -116,7 +123,8 @@ const ProductListSection = () => {
                 page: currentPage,
                 pageSize: itemsPerPage,
                 search: searchTerm,
-                userid: (user.Role || user.role || '').toLowerCase() === 'admin' ? 'ADMIN' : (user.userid || '')
+                userid: (user.Role || user.role || '').toLowerCase() === 'admin' ? 'ADMIN' : (user.userid || ''),
+                catelogid: user.Catelogid || user.catelogid || ''
             });
             const response = await fetch(`${API_URL}/api/product?${params}`);
             const result = await response.json();
@@ -357,6 +365,13 @@ const ProductListSection = () => {
 
     const steps = ['Info', 'Features', 'Specifications', 'Task Details'];
 
+    // Prices modal state
+    const [showPricesModal, setShowPricesModal] = useState(false);
+    const [pricesTab, setPricesTab] = useState(0); // 0: Last Cost, 1: Average Cost
+    const [showHistory, setShowHistory] = useState(false);
+    const [includeTaxes, setIncludeTaxes] = useState(false);
+    const [currency, setCurrency] = useState('AED');
+
     return (
         <Box sx={{ p: { xs: 2, sm: 3, md: 4 }, bgcolor: '#f8fafc', minHeight: '100vh' }}>
             {/* Header Area */}
@@ -435,17 +450,16 @@ const ProductListSection = () => {
                     />
                 </Stack>
 
-                <Stack direction="row" spacing={1} sx={{ 
+                <Stack direction="row" spacing={1.5} sx={{ 
                     width: { xs: '100%', md: 'auto' },
                     overflowX: 'auto', 
                     pb: { xs: 1, md: 0 },
                     '&::-webkit-scrollbar': { display: 'none' },
                     justifyContent: { xs: 'flex-start', md: 'flex-end' }
                 }}>
-                    {[
-                        { label: 'Excel', icon: <FileDownloadIcon />, color: '#10b981', action: exportToExcel },
+                    {[ 
                         { label: 'PDF', icon: <PictureAsPdfIcon />, color: '#ef4444', action: exportToPDF },
-                        { label: 'Prices', icon: <PriceCheckIcon />, color: '#6366f1' },
+                        { label: 'Prices', icon: <PriceCheckIcon />, color: '#6366f1', action: () => setShowPricesModal(true) },
                         { label: 'Link', icon: <LinkIcon />, color: '#64748b' },
                         { label: 'Export', icon: <ExitToAppIcon />, color: '#f59e0b', action: () => navigate('/product-export') }
                     ].map((btn) => (
@@ -458,18 +472,18 @@ const ProductListSection = () => {
                             sx={{
                                 minWidth: 'fit-content',
                                 whiteSpace: 'nowrap',
-                                borderRadius: '12px',
+                                borderRadius: '16px',
                                 color: btn.color,
-                                borderColor: 'rgba(226, 232, 240, 0.8)',
+                                borderColor: 'rgba(226, 232, 240, 0.7)',
                                 textTransform: 'none',
                                 fontWeight: 600,
-                                px: 1.5,
-                                py: 1,
-                                bgcolor: 'rgba(255, 255, 255, 0.5)',
+                                px: 2,
+                                py: 1.1,
+                                bgcolor: '#fff',
                                 '&:hover': { 
-                                    bgcolor: '#fff', 
+                                    bgcolor: '#f8fafc', 
                                     borderColor: btn.color,
-                                    boxShadow: `0 4px 12px ${btn.color}15`
+                                    boxShadow: `0 6px 16px ${btn.color}10`
                                 },
                                 transition: 'all 0.2s'
                             }}
@@ -702,6 +716,166 @@ const ProductListSection = () => {
                     sx={{ mx: 3, mb: 3 }}
                 />
             )}
+
+            {/* Prices Modal - Modern Design */}
+            <Dialog
+                open={showPricesModal}
+                onClose={() => setShowPricesModal(false)}
+                maxWidth="lg"
+                fullWidth
+                PaperProps={{
+                    sx: {
+                        borderRadius: isMobile ? 2 : 3,
+                        overflow: 'hidden',
+                        boxShadow: '0 24px 80px rgba(2,6,23,0.35)'
+                    }
+                }}
+            >
+                <DialogTitle sx={{ bgcolor: '#2C3E50 !important', color: '#fff', py: 2.5, boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.08)' }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between">
+                        <Stack direction="row" spacing={1.5} alignItems="center">
+                            <Box sx={{ p: 1, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 2, display: 'flex' }}>
+                                <PriceCheckIcon />
+                            </Box>
+                            <Typography sx={{ fontWeight: 800, letterSpacing: '0.2px' }}>Product details</Typography>
+                        </Stack>
+                        <IconButton onClick={() => setShowPricesModal(false)} sx={{ color: '#fff' }}><CloseIcon /></IconButton>
+                    </Stack>
+                </DialogTitle>
+
+                <DialogContent sx={{ p: { xs: 2, sm: 3 } }} dividers>
+                    <Stack spacing={2}>
+                        <Box>
+                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mb: 0.5 }}>Product name:</Typography>
+                            <TextField
+                                fullWidth
+                                size="small"
+                                placeholder="Select or type..."
+                                InputProps={{
+                                    startAdornment: (
+                                        <InputAdornment position="start">
+                                            <SearchIcon sx={{ color: '#94a3b8', fontSize: 18 }} />
+                                        </InputAdornment>
+                                    )
+                                }}
+                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                            />
+                        </Box>
+
+                        {/* Currency and include taxes controls removed per request */}
+
+                        <Box sx={{ borderBottom: 1, borderColor: '#e5e7eb' }}>
+                            <Tabs
+                                value={pricesTab}
+                                onChange={(e, v) => { setPricesTab(v); setShowHistory(false); }}
+                                TabIndicatorProps={{ style: { display: 'none' } }}
+                                sx={{
+                                    '& .MuiTabs-flexContainer': { gap: 1 },
+                                    '& .MuiTab-root': {
+                                        textTransform: 'none',
+                                        fontWeight: 700,
+                                        minHeight: 40,
+                                        borderRadius: '999px',
+                                        border: '1px solid #e2e8f0',
+                                        bgcolor: '#ffffff',
+                                        px: 2
+                                    },
+                                    '& .MuiTab-root:hover': { bgcolor: '#f1f5f9' },
+                                    '& .Mui-selected': { bgcolor: '#2C3E50', color: '#fff !important', borderColor: '#2C3E50' }
+                                }}
+                            >
+                                <Tab label="Last Cost" />
+                                <Tab label="Average Cost" />
+                            </Tabs>
+                        </Box>
+
+                        <Grid container spacing={2}>
+                            {[
+                                { label: 'Diamond', color: '#2563eb' },
+                                { label: 'Gold', color: '#f59e0b' },
+                                { label: 'Silver', color: '#64748b' }
+                            ].map((tier, idx) => (
+                                <Grid
+                                    item
+                                    xs={12}
+                                    sm={4}
+                                    md={4}
+                                    key={tier.label}
+                                    sx={{
+                                        display: 'flex'
+                                    }}
+                                >
+                                    <Paper
+                                        sx={{
+                                            p: 1.5,
+                                            borderRadius: 3,
+                                            border: '1px solid #e5e7eb',
+                                            position: 'relative',
+                                            width: '324px !important',
+                                            minHeight: '110px !important',
+                                            flexShrink: 0,
+                                            transition: 'transform .15s ease, box-shadow .15s ease',
+                                            '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 10px 20px rgba(2,6,23,.08)' }
+                                        }}
+                                    >
+                                        <Box sx={{ position: 'absolute', top: 0, left: 0, height: '100%', width: 4, bgcolor: tier.color, borderRadius: '8px 0 0 8px' }} />
+                                        <Stack spacing={1}>
+                                            <Stack direction="row" spacing={1} alignItems="center">
+                                                <EmojiEventsIcon sx={{ color: tier.color }} />
+                                                <Typography variant="body2" sx={{ color: '#6b7280', fontWeight: 700 }}>{tier.label}</Typography>
+                                            </Stack>
+                                            <Typography sx={{ fontWeight: 900, color: '#0f172a' }}>AED 0.00</Typography>
+                                        </Stack>
+                                    </Paper>
+                                </Grid>
+                            ))}
+                        </Grid>
+
+                        {pricesTab === 0 && (
+                            <>
+                                <Stack direction="row" alignItems="center" spacing={1} sx={{ cursor: 'pointer', width: 'fit-content' }} onClick={() => setShowHistory(!showHistory)}>
+                                    {showHistory ? <KeyboardArrowUpIcon sx={{ color: '#6b7280' }} /> : <KeyboardArrowDownIcon sx={{ color: '#6b7280' }} />}
+                                    <Typography variant="body2" sx={{ color: '#2563eb', fontWeight: 700 }}>View History</Typography>
+                                </Stack>
+
+                                <Paper variant="outlined" sx={{ borderRadius: 2 }}>
+                                    <Box sx={{ p: 2 }}>
+                                        <Typography sx={{ fontWeight: 800, color: '#111827', mb: 2 }}>Cost History</Typography>
+                                        {showHistory ? (
+                                            <Table size="small">
+                                                <TableHead>
+                                                    <TableRow>
+                                                        <TableCell>Bill Date</TableCell>
+                                                        <TableCell>Bill No</TableCell>
+                                                        <TableCell>PurchaseQty</TableCell>
+                                                        <TableCell>Issued</TableCell>
+                                                        <TableCell>CurrentQty</TableCell>
+                                                        <TableCell>Cost</TableCell>
+                                                        <TableCell>MSP</TableCell>
+                                                        <TableCell>MSP</TableCell>
+                                                        <TableCell>MSP</TableCell>
+                                                    </TableRow>
+                                                </TableHead>
+                                                <TableBody>
+                                                    <TableRow>
+                                                        <TableCell colSpan={9} align="center" sx={{ py: 4, color: '#6b7280' }}>No cost history found.</TableCell>
+                                                    </TableRow>
+                                                </TableBody>
+                                            </Table>
+                                        ) : (
+                                            <Typography variant="body2" sx={{ color: '#6b7280' }}>History hidden</Typography>
+                                        )}
+                                    </Box>
+                                </Paper>
+                            </>
+                        )}
+                    </Stack>
+                </DialogContent>
+
+                <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
+                    <Button onClick={() => setShowPricesModal(false)} sx={{ color: '#334155' }}>Close</Button>
+                </DialogActions>
+            </Dialog>
 
             {/* Redesigned Add Product Dialog */}
             <Dialog 
