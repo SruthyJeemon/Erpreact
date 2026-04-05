@@ -1398,9 +1398,8 @@ const TaskDetailModal = ({ open, onClose, task, subtasks = [], refreshTasks }) =
                         </Paper>
 
                         {/* Assign Subtask Dialog - Custom Mockup Design */}
-                        <Dialog
-                            open={subtaskModalOpen}
-                            onClose={() => setSubtaskModalOpen(false)}
+                        <Dialog open={subtaskModalOpen}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setSubtaskModalOpen(false) } }}
                             maxWidth="md"
                             fullWidth
                             PaperProps={{
@@ -1812,9 +1811,8 @@ const TaskDetailModal = ({ open, onClose, task, subtasks = [], refreshTasks }) =
     };
 
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
+        <Dialog open={open}
+            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { onClose(event, reason); } }}
             maxWidth="xl"
             fullWidth
             fullScreen={isSmallScreen}
@@ -2166,9 +2164,8 @@ const AddTaskModal = ({ open, onClose, onTaskCreated }) => {
     };
 
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
+        <Dialog open={open}
+            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { onClose(event, reason); } }}
             maxWidth="md"
             fullWidth
             scroll="paper"
@@ -4040,9 +4037,8 @@ const TaskListingSection = () => {
             </Drawer>
 
             {/* Task Status Report Modal */}
-            <Dialog
-                open={isReportOpen}
-                onClose={() => setIsReportOpen(false)}
+            <Dialog open={isReportOpen}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsReportOpen(false) } }}
                 maxWidth="xl"
                 fullWidth
                 PaperProps={{
@@ -4060,9 +4056,8 @@ const TaskListingSection = () => {
             </Dialog>
 
             {/* View Task List Modal */}
-            <Dialog
-                open={isViewListOpen}
-                onClose={() => setIsViewListOpen(false)}
+            <Dialog open={isViewListOpen}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsViewListOpen(false) } }}
                 maxWidth="xl"
                 fullWidth
                 PaperProps={{

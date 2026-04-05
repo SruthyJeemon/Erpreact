@@ -566,9 +566,8 @@ const PickupSection = () => {
             )}
 
             {/* PREVIEW MODAL - Hybrid design */}
-            <Dialog 
-                open={isDetailModalOpen} 
-                onClose={handleCloseModal}
+            <Dialog open={isDetailModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }}
                 maxWidth="lg"
                 fullWidth
                 PaperProps={{

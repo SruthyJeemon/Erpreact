@@ -979,7 +979,7 @@ const RoleManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingRole ? 'Edit Role' : 'Add New Role'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -1239,7 +1239,7 @@ const MarketplaceManagementSection = () => {
         </TableContainer>
       )}
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingMarketplace ? 'Edit Marketplace' : 'Add New Marketplace'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -1749,12 +1749,11 @@ const ModuleManagementSection = () => {
       )}
 
       {/* Module Modal */}
-      <Dialog
-        open={showModuleModal}
-        onClose={() => {
+      <Dialog open={showModuleModal}
+        onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { 
           setShowModuleModal(false);
           setEditingModule(null);
-          setModuleFormData({ moduleName: '', status: 'Active' });
+          setModuleFormData({ moduleName: '', status: 'Active } }});
           setMessage({ type: '', text: '' });
         }}
         maxWidth="xs"
@@ -1840,12 +1839,11 @@ const ModuleManagementSection = () => {
       </Dialog>
 
       {/* SubModule Modal */}
-      <Dialog
-        open={showSubModuleModal}
-        onClose={() => {
+      <Dialog open={showSubModuleModal}
+        onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { 
           setShowSubModuleModal(false);
           setEditingSubModule(null);
-          setSubModuleFormData({ subModuleName: '', moduleId: 0, status: 'Active' });
+          setSubModuleFormData({ subModuleName: '', moduleId: 0, status: 'Active } }});
           setMessage({ type: '', text: '' });
         }}
         maxWidth="xs"
@@ -3145,9 +3143,8 @@ const UsersSection = () => {
       </Box>
 
       {/* Modal for Add/Edit User */}
-      <Dialog
-        open={showModal}
-        onClose={handleCloseModal}
+      <Dialog open={showModal}
+        onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }}
         maxWidth="md"
         fullWidth
         PaperProps={{ sx: { borderRadius: 3 } }}
@@ -3579,7 +3576,7 @@ const CatalogManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingCatalog ? 'Edit Catalog' : 'Add New Catalog'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -3933,7 +3930,7 @@ const StockLocationManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingStockLocation ? 'Edit Stock Location' : 'Add New Stock Location'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -4327,7 +4324,7 @@ const BillFormatManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingBillFormat ? 'Edit Bill Format' : 'Add New Bill Format'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -4665,7 +4662,7 @@ const DecimalFormatManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingDecimalFormat ? 'Edit Decimal Format' : 'Add New Decimal Format'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -4969,7 +4966,7 @@ const PaymentTermsManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingPaymentTerm ? 'Edit Payment Term' : 'Add New Payment Term'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -5256,7 +5253,7 @@ const DateFormatManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingDateFormat ? 'Edit Date Format' : 'Add New Date Format'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -5565,7 +5562,7 @@ const CurrencyManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingCurrency ? 'Edit Currency' : 'Add New Currency'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -6364,7 +6361,7 @@ const VATManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingVAT ? 'Edit VAT Setting' : 'Add New VAT Setting'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -6716,7 +6713,7 @@ const StockCheckManagementSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingStockCheck ? 'Edit Stock Check' : 'Add New Stock Check'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -7070,7 +7067,7 @@ const BankAccountManagementSection = () => {
       </TableContainer>
 
       {/* Modal for Add/Edit Bank Account */}
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingBankAccount ? 'Edit Bank Account' : 'Add New Bank Account'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -7412,7 +7409,7 @@ const VehicleManagementSection = () => {
       </TableContainer>
 
       {/* Modal for Add/Edit Vehicle */}
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingVehicle ? 'Edit Vehicle' : 'Add New Vehicle'}</Typography>
           <IconButton size="small" onClick={() => setShowModal(false)} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -7739,7 +7736,7 @@ const DriverManagementSection = () => {
       </TableContainer>
 
       {/* Modal for Add/Edit Driver */}
-      <Dialog open={showModal} onClose={handleCloseModal} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff', px: 3, py: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>{editingDriver ? 'Edit Driver' : 'Add New Driver'}</Typography>
           <IconButton size="small" onClick={handleCloseModal} sx={{ color: '#fff' }}><CloseIcon fontSize="small" /></IconButton>
@@ -8117,9 +8114,8 @@ const SalesReturnManagementSection = () => {
       </TableContainer>
 
       {/* Modal for Add/Edit Sales Return */}
-      <Dialog
-        open={showModal}
-        onClose={() => setShowModal(false)}
+      <Dialog open={showModal}
+        onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }}
         maxWidth="sm"
         fullWidth
         PaperProps={{ sx: { borderRadius: 3 } }}
@@ -8398,7 +8394,7 @@ const ChartOfAccountsSection = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ bgcolor: '#1e293b', color: '#fff' }}>{editingAccount ? 'Edit Account' : 'Add New Account'}</DialogTitle>
         <form onSubmit={handleSubmit}>
           <DialogContent sx={{ p: 4 }}>

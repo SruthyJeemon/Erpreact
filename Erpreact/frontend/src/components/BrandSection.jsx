@@ -516,9 +516,8 @@ const BrandSection = () => {
             )}
 
             {/* Add/Edit Modal */}
-            <Dialog
-                open={showModal}
-                onClose={handleCloseModal}
+            <Dialog open={showModal}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }}
                 maxWidth="xs"
                 fullWidth
                 PaperProps={{

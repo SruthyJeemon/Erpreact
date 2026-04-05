@@ -442,7 +442,7 @@ const TaskStatusReport = ({ onClose, onTaskUpdated, onViewTask }) => {
             </DialogContent>
 
             {/* View Task Dialog */}
-            <Dialog open={viewOpen} onClose={() => setViewOpen(false)} maxWidth="md" fullWidth>
+            <Dialog open={viewOpen} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setViewOpen(false) } }} maxWidth="md" fullWidth>
                 <DialogTitle sx={{ bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Typography variant="body1" fontWeight={700} color="#1e293b">
                         {selectedTask?.Title || 'Task Details'}

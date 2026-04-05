@@ -495,7 +495,7 @@ const CategorySection = () => {
             )}
 
             {/* Modal */}
-            <Dialog open={showModal} onClose={handleCloseModal} maxWidth="sm" fullWidth>
+            <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ bgcolor: '#2C3E50', color: '#fff' }}>
                     {editingCategory ? 'Edit Category' : 'Add New Category'}
                 </DialogTitle>

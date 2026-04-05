@@ -293,9 +293,8 @@ const StockAdjustmentApprovalSection = ({ onViewAdjustment }) => {
             </TableContainer>
 
             {/* View Modal */}
-            <Dialog 
-                open={isViewModalOpen} 
-                onClose={() => setIsViewModalOpen(false)} 
+            <Dialog open={isViewModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsViewModalOpen(false) } }} 
                 maxWidth="md" 
                 fullWidth
                 PaperProps={{ sx: { borderRadius: '24px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)' } }}

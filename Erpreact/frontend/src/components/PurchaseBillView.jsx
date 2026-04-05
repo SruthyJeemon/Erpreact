@@ -1207,9 +1207,8 @@ const PurchaseBillView = ({ initialBillId, showApprovalActions = false, onApprov
                     </Box>
                 </Box>
                 {/* Approval Confirmation Dialog */}
-                <Dialog
-                    open={approvalDialogOpen}
-                    onClose={() => setApprovalDialogOpen(false)}
+                <Dialog open={approvalDialogOpen}
+                    onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setApprovalDialogOpen(false) } }}
                     maxWidth="sm"
                     fullWidth
                     PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden' } }}
@@ -1286,9 +1285,8 @@ const PurchaseBillView = ({ initialBillId, showApprovalActions = false, onApprov
                 </Dialog>
 
                 {/* Edit Request Reason Dialog */}
-                <Dialog
-                    open={editRequestDialogOpen}
-                    onClose={() => setEditRequestDialogOpen(false)}
+                <Dialog open={editRequestDialogOpen}
+                    onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setEditRequestDialogOpen(false) } }}
                     maxWidth="sm"
                     fullWidth
                     PaperProps={{ sx: { borderRadius: 3 } }}

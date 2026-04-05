@@ -354,7 +354,7 @@ const ProductApprovalSection = ({ onNavigate }) => {
             )}
 
             {/* Response Modal */}
-            <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+            <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
                 <DialogTitle sx={{ bgcolor: '#2C3E50', color: '#fff', fontWeight: 700 }}>
                     {modalData.status === 'Approved' ? <CheckCircleIcon sx={{ verticalAlign: 'middle', mr: 1 }} /> : <CancelIcon sx={{ verticalAlign: 'middle', mr: 1 }} />}
                     {modalData.status} Product

@@ -706,9 +706,8 @@ const ProductApprovalDetails = () => {
             </Box>
 
             {/* Approval/Rejection Modal */}
-            <Dialog
-                open={showModal}
-                onClose={() => setShowModal(false)}
+            <Dialog open={showModal}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }}
                 maxWidth="sm"
                 fullWidth
                 PaperProps={{ sx: { borderRadius: 4, boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' } }}

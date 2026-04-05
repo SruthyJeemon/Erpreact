@@ -1,0 +1,61 @@
+>     const handleRequestSubmit = async () => {
+          if (!reasonText.trim()) {
+              alert("Please enter a reason.");
+              return;
+          }
+  
+          try {
+              const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+              const user = JSON.parse(localStorage.getItem('user') || '{}');
+              const userId = user.Userid || user.userid || user.id || user.Id || 'ADMIN';
+  
+              // Format: id	Productid	Userid	Editreason	Adddate	Type	Status	Approved_userid
+              const payload = {
+                  Productid: p('product_id'),
+                  Userid: userId,
+                  Editreason: reasonText,
+                  Adddate: new Date().toLocaleString('en-GB').replace(',', ''), // "27-01-2026 12:47" format approx
+                  Type: approvalWarningType === 'edit' ? 'Editrequest' : 'Deleterequest',
+                  Status: 0,
+                  Approved_userid: null
+              };
+  
+              // Assuming a standard Insert/Post endpoint. user requested "Tbl_Editreason table used to stored".
+              // Since I don't know the exact endpoint, I'll use a generic POST to a resource named 'editreason'
+              // If this fails, user will likely report it.
+              const res = await fetch(`${API_URL}/api/editreason`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+              });
+  
+              if (res.ok) {
+                  setShowReasonModal(false);
+                  setShowApprovalWarning(false);
+                  setReasonText('');
+  
+                  await Swal.fire({
+                      title: 'Success!',
+                      text: `${approvalWarningType === 'edit' ? 'Edit' : 'Delete'} request sent successfully!`,
+                      icon: 'success',
+                      timer: 3000,
+                      showConfirmButton: false
+                  });
+              } else {
+                  Swal.fire('Error', 'Failed to send request. Please try again.', 'error');
+              }
+          } catch (err) {
+              console.error(err);
+              Swal.fire('Error', 'An error occurred while sending the request.', 'error');
+          }
+      };
+  
+      // Set/Combo Logic
+      // -------------------------------------------------------------------------
+      const handleSetItemSearch = async (event, value) => {
+          if (!value || value.length < 2) {
+              setItemSearchResults([]);
+              return;
+          }
+          setIsSearchingItems(true);
+          try {

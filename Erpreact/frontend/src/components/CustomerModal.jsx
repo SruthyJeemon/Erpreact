@@ -263,9 +263,8 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
     };
 
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
+        <Dialog open={open}
+            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { onClose(event, reason); } }}
             maxWidth="xl"
             fullWidth
             TransitionComponent={Transition}

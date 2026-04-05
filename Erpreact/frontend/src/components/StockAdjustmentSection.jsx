@@ -719,9 +719,8 @@ const StockAdjustmentSection = () => {
             </Grid>
 
             {/* MANAGE REASONS MODAL */}
-            <Dialog 
-                open={isManageReasonsModalOpen} 
-                onClose={() => setIsManageReasonsModalOpen(false)}
+            <Dialog open={isManageReasonsModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsManageReasonsModalOpen(false) } }}
                 maxWidth="sm"
                 fullWidth
                 disableEnforceFocus
@@ -957,9 +956,8 @@ const StockAdjustmentSection = () => {
             </Paper>
 
             {/* ADD ADJUSTMENT MODAL */}
-            <Dialog 
-                open={isAddModalOpen} 
-                onClose={handleCloseModal}
+            <Dialog open={isAddModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }}
                 maxWidth="xl"
                 fullWidth
                 disableEnforceFocus
@@ -1285,9 +1283,8 @@ const StockAdjustmentSection = () => {
                 </DialogActions>
             </Dialog>
             {/* VIEW ADJUSTMENT MODAL */}
-            <Dialog 
-                open={isViewModalOpen} 
-                onClose={() => setIsViewModalOpen(false)}
+            <Dialog open={isViewModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsViewModalOpen(false) } }}
                 maxWidth="lg"
                 fullWidth
                 PaperProps={{ 
@@ -1590,9 +1587,8 @@ const StockAdjustmentSection = () => {
             </Dialog>
 
             {/* REASON MODAL FOR EDIT/DELETE REQUEST */}
-            <Dialog 
-                open={isReasonModalOpen} 
-                onClose={() => setIsReasonModalOpen(false)}
+            <Dialog open={isReasonModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsReasonModalOpen(false) } }}
                 PaperProps={{ sx: { borderRadius: '20px' } }}
             >
                 <DialogTitle sx={{ fontWeight: 800 }}>Reason for {reasonType === 'edit' ? 'Edit' : 'Delete'} Request</DialogTitle>

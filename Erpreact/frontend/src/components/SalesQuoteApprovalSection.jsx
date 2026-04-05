@@ -355,7 +355,7 @@ const SalesQuoteApprovalSection = ({ onBack, onViewQuote, hideHeader = false }) 
             </TableContainer>
 
             {/* Approval Dialog */}
-            <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
+            <Dialog open={openDialog} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseDialog(event, reason); } }} maxWidth="sm" fullWidth>
                 <DialogTitle sx={{ bgcolor: '#2d3748', color: 'white' }}>
                     {approvalStatus === 'Approved' ? 'Approve Sales Quote' : 'Reject Sales Quote'}
                 </DialogTitle>

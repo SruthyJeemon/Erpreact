@@ -306,9 +306,8 @@ const PurchaseEditRequestSection = ({ onBack, onViewBill, hideHeader = false }) 
             </TableContainer>
 
             {/* Process Dialog */}
-            <Dialog
-                open={processDialogOpen}
-                onClose={() => setProcessDialogOpen(false)}
+            <Dialog open={processDialogOpen}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setProcessDialogOpen(false) } }}
                 PaperProps={{ sx: { borderRadius: 3, width: '100%', maxWidth: 400 } }}
             >
                 <DialogTitle sx={{

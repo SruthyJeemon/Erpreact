@@ -197,7 +197,22 @@ namespace Api.Controllers
                                         modelno = reader.IsDBNull(reader.GetOrdinal("Modelno")) ? "N/A" : reader["Modelno"].ToString(),
                                         batchno = reader.IsDBNull(reader.GetOrdinal("Batchno")) ? "N/A" : reader["Batchno"].ToString(),
                                         barcodeno = reader.IsDBNull(reader.GetOrdinal("EANBarcodeno")) ? "N/A" : reader["EANBarcodeno"].ToString(),
-                                        Description = reader.IsDBNull(reader.GetOrdinal("Description")) ? "" : reader["Description"].ToString()
+                                        Description = reader.IsDBNull(reader.GetOrdinal("Description")) ? "" : reader["Description"].ToString(),
+                                        Short_description = reader.HasColumn("Short_description") ? reader["Short_description"]?.ToString() : "",
+                                        Hscode = reader.HasColumn("Hscode") ? reader["Hscode"]?.ToString() : "",
+                                        Country_orgin = reader.HasColumn("Country_orgin") ? reader["Country_orgin"]?.ToString() : "",
+                                        Standarduom = reader.HasColumn("Standarduom") ? reader["Standarduom"]?.ToString() : "",
+                                        Salesuom = reader.HasColumn("Salesuom") ? reader["Salesuom"]?.ToString() : "",
+                                        Purchaseuom = reader.HasColumn("Purchaseuom") ? reader["Purchaseuom"]?.ToString() : "",
+                                        Length = reader.HasColumn("Length") && !reader.IsDBNull(reader.GetOrdinal("Length")) ? reader["Length"] : 0,
+                                        Width = reader.HasColumn("Width") && !reader.IsDBNull(reader.GetOrdinal("Width")) ? reader["Width"] : 0,
+                                        Height = reader.HasColumn("Height") && !reader.IsDBNull(reader.GetOrdinal("Height")) ? reader["Height"] : 0,
+                                        Weight = reader.HasColumn("Weight") && !reader.IsDBNull(reader.GetOrdinal("Weight")) ? reader["Weight"] : 0,
+                                        Reorderpoint = reader.HasColumn("Reorderpoint") ? reader["Reorderpoint"]?.ToString() : "0",
+                                        Reorderqty = reader.HasColumn("Reorderqty") ? reader["Reorderqty"]?.ToString() : "0",
+                                        Defaultlocation = reader.HasColumn("Defaultlocation") ? reader["Defaultlocation"]?.ToString() : "",
+                                        Remarks = reader.HasColumn("Remarks") ? reader["Remarks"]?.ToString() : "",
+                                        Agecategory = reader.HasColumn("Agecategory") ? reader["Agecategory"]?.ToString() : ""
                                     };
                                     rawVariants.Add(v);
                                 }
@@ -260,6 +275,44 @@ namespace Api.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"[ERROR] Exception in GetVariants for '{productId}': {ex.Message}");
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpGet("marketplaces/{productId}")]
+        public async Task<IActionResult> GetVariantMarketplaces(string productId)
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                List<MarketplaceData> marketplaces = new List<MarketplaceData>();
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    await con.OpenAsync();
+                    using (SqlCommand cmd = new SqlCommand("Sp_Productmarketplaceadd", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Productvariantsid", productId);
+                        cmd.Parameters.AddWithValue("@Query", 4);
+                        
+                        using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                marketplaces.Add(new MarketplaceData
+                                {
+                                    Marketplace1 = reader["Marketplacename"]?.ToString() ?? "",
+                                    Status = reader["Visibility"]?.ToString() == "1" || reader["Visibility"]?.ToString() == "True",
+                                    Link = reader["Link"]?.ToString() ?? ""
+                                });
+                            }
+                        }
+                    }
+                }
+                return Ok(marketplaces);
+            }
+            catch (Exception ex)
+            {
                 return StatusCode(500, new { Success = false, Message = ex.Message });
             }
         }
@@ -1696,20 +1749,22 @@ namespace Api.Controllers
                                     Onlineprice = row["Onlineprice"]?.ToString(),
                                     brand = row["Brand"]?.ToString(),
                                     username = row["Firstname"]?.ToString(),
-                                    Short_description = row["Short_description"]?.ToString(),
-                                    Standarduom = row["Standarduom"]?.ToString(),
-                                    Salesuom = row["Salesuom"]?.ToString(),
-                                    Purchaseuom = row["Purchaseuom"]?.ToString(),
-                                    Length = row["Length"],
-                                    Width = row["Width"],
-                                    Height = row["Height"],
-                                    Weight = row["Weight"],
-                                    Hscode = row["Hscode"]?.ToString(),
-                                    Country_orgin = row["Country_orgin"]?.ToString(),
-                                    Remarks = row["Remarks"]?.ToString(),
-                                    Agecategory = row["Agecategory"]?.ToString(),
-                                    Serialized = row["Serialized"]?.ToString(),
-                                    Defaultlocation = row["Defaultlocation"]?.ToString()
+                                    Short_description = dtR.Columns.Contains("Short_description") ? row["Short_description"]?.ToString() : "",
+                                    Standarduom = dtR.Columns.Contains("Standarduom") ? row["Standarduom"]?.ToString() : "",
+                                    Salesuom = dtR.Columns.Contains("Salesuom") ? row["Salesuom"]?.ToString() : "",
+                                    Purchaseuom = dtR.Columns.Contains("Purchaseuom") ? row["Purchaseuom"]?.ToString() : "",
+                                    Length = dtR.Columns.Contains("Length") ? row["Length"] : 0,
+                                    Width = dtR.Columns.Contains("Width") ? row["Width"] : 0,
+                                    Height = dtR.Columns.Contains("Height") ? row["Height"] : 0,
+                                    Weight = dtR.Columns.Contains("Weight") ? row["Weight"] : 0,
+                                    Hscode = dtR.Columns.Contains("Hscode") ? row["Hscode"]?.ToString() : "",
+                                    Country_orgin = dtR.Columns.Contains("Country_orgin") ? row["Country_orgin"]?.ToString() : "",
+                                    Reorderpoint = dtR.Columns.Contains("Reorderpoint") ? row["Reorderpoint"]?.ToString() : "0",
+                                    Reorderqty = dtR.Columns.Contains("Reorderqty") ? row["Reorderqty"]?.ToString() : "0",
+                                    Agecategory = dtR.Columns.Contains("Agecategory") ? row["Agecategory"]?.ToString() : "",
+                                    Remarks = dtR.Columns.Contains("Remarks") ? row["Remarks"]?.ToString() : "",
+                                    Defaultlocation = dtR.Columns.Contains("Defaultlocation") ? row["Defaultlocation"]?.ToString() : "",
+                                    Serialized = dtR.Columns.Contains("Serialized") ? row["Serialized"]?.ToString() : "0"
                                 });
                             }
 

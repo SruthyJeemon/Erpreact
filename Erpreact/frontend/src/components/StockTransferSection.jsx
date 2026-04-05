@@ -1052,9 +1052,8 @@ const StockTransferSection = () => {
             </Paper>
 
             {/* ADD STOCK TRANSFER MODAL */}
-            <Dialog 
-                open={isAddModalOpen} 
-                onClose={handleCloseModal}
+            <Dialog open={isAddModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseModal(event, reason); } }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{
@@ -1306,9 +1305,8 @@ const StockTransferSection = () => {
             </Dialog>
 
             {/* VIEW STOCK TRANSFER MODAL */}
-            <Dialog 
-                open={isViewModalOpen} 
-                onClose={handleCloseViewModal}
+            <Dialog open={isViewModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseViewModal(event, reason); } }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{
@@ -1496,9 +1494,8 @@ const StockTransferSection = () => {
             </Dialog>
 
             {/* EDIT STOCK TRANSFER MODAL */}
-            <Dialog 
-                open={isEditModalOpen} 
-                onClose={handleCloseEditModal}
+            <Dialog open={isEditModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseEditModal(event, reason); } }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{
@@ -1758,9 +1755,8 @@ const StockTransferSection = () => {
             </Dialog>
 
             {/* AUDIT LOG MODAL */}
-            <Dialog 
-                open={isLogModalOpen} 
-                onClose={() => setIsLogModalOpen(false)}
+            <Dialog open={isLogModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsLogModalOpen(false) } }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{

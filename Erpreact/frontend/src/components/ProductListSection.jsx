@@ -718,9 +718,8 @@ const ProductListSection = () => {
             )}
 
             {/* Prices Modal - Modern Design */}
-            <Dialog
-                open={showPricesModal}
-                onClose={() => setShowPricesModal(false)}
+            <Dialog open={showPricesModal}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowPricesModal(false) } }}
                 maxWidth="lg"
                 fullWidth
                 PaperProps={{
@@ -878,9 +877,8 @@ const ProductListSection = () => {
             </Dialog>
 
             {/* Redesigned Add Product Dialog */}
-            <Dialog 
-                open={showModal} 
-                onClose={() => setShowModal(false)} 
+            <Dialog open={showModal} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} 
                 maxWidth="md" 
                 fullWidth 
                 fullScreen={isMobile}

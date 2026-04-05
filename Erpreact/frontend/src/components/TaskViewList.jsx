@@ -548,9 +548,8 @@ const TaskViewList = ({ onClose, onTaskUpdated }) => {
             }
 
             {/* Premium Style Edit Modal */}
-            <Dialog
-                open={isEditModalOpen}
-                onClose={() => setIsEditModalOpen(false)}
+            <Dialog open={isEditModalOpen}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsEditModalOpen(false) } }}
                 maxWidth="md"
                 fullWidth
                 scroll="paper"

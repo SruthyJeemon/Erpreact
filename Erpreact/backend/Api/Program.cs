@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using System.Data;
 using Api.Models;
+using Api.Extensions;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 
@@ -7007,7 +7008,7 @@ app.MapPost("/api/product/reject/{id}", async (string id, HttpRequest request, S
 
 
 // GET: Fetch Pending Items (Variants) for Approval
-app.MapGet("/api/item/pending", async (string? search, string? currentUserId, int? page, int? pageSize, SqlConnection connection) =>
+app.MapGet("/api/item/pending", async (string? search, string? currentUserId, string? catelogid, int? page, int? pageSize, SqlConnection connection) =>
 {
     var items = new List<dynamic>();
     int totalCount = 0;
@@ -7015,12 +7016,34 @@ app.MapGet("/api/item/pending", async (string? search, string? currentUserId, in
     {
         await connection.OpenAsync();
         
-        // Use Sp_Productvariants with Query = 13 as requested
-        using (var command = new SqlCommand("Sp_Productvariants", connection))
+        // We use a temporary table to capture the SP results because Query 13 doesn't return Catelogid.
+        // Then we join with Tbl_Registration to get the Catelogid for each item.
+        string sql = @"
+            DECLARE @Results TABLE (
+                Userid VARCHAR(MAX),
+                Username VARCHAR(MAX),
+                Productid VARCHAR(MAX),
+                Productname VARCHAR(MAX),
+                Itemname VARCHAR(MAX),
+                allvalues VARCHAR(MAX),
+                Id INT
+            );
+            
+            INSERT INTO @Results (Userid, Username, Productid, Productname, Itemname, allvalues, Id)
+            EXEC Sp_Productvariants 
+                @Id='', @Userid=@InUserid, @Productid='', @Productname='', @Varianttype='', @Value='', @Totalqty='', @Noofqty_online='', 
+                @Modelno='', @Batchno='', @EANBarcodeno='', @Isdelete='', @Status='', @Warehousecheck='', @Managerapprovestatus='', 
+                @Warehouseapprovestatus='', @Accountsapprovestatus='', @Date='', @Parentid='', @Ischild='', @Query=13;
+
+            SELECT R.Catelogid, T.* 
+            FROM @Results T
+            LEFT JOIN Tbl_Registration R ON R.Userid = T.Userid
+            ORDER BY T.Id DESC;
+        ";
+
+        using (var command = new SqlCommand(sql, connection))
         {
-            command.CommandType = System.Data.CommandType.StoredProcedure;
-            command.Parameters.AddWithValue("@Userid", currentUserId ?? "");
-            command.Parameters.AddWithValue("@Query", 13);
+            command.Parameters.AddWithValue("@InUserid", currentUserId ?? "");
             
             using (var reader = await command.ExecuteReaderAsync())
             {
@@ -7035,17 +7058,23 @@ app.MapGet("/api/item/pending", async (string? search, string? currentUserId, in
                         Productname = reader["Productname"] == DBNull.Value ? "" : reader["Productname"].ToString(),
                         Itemname = reader["Itemname"] == DBNull.Value ? "" : reader["Itemname"].ToString(),
                         allvalues = reader["allvalues"] == DBNull.Value ? "" : reader["allvalues"].ToString(),
-                        // These fields are not in Query 13 but kept for UI compatibility if needed
-                        Totalqty = "0", 
-                        Date = "",
-                        CreatorName = reader["Username"] == DBNull.Value ? "Unknown" : reader["Username"].ToString(),
-                        CreatorRole = "User"
+                        Catelogid = reader["Catelogid"] == DBNull.Value ? "" : reader["Catelogid"].ToString()
                     });
                 }
             }
         }
 
-        // Apply filtering and pagination in-memory since Sp_Productvariants Query 13 doesn't support it directly
+        // Apply filtering by Catelogid - trimming both to avoid whitespace issues
+        if (!string.IsNullOrEmpty(catelogid))
+        {
+            string searchCatId = catelogid.Trim();
+            items = items.Where(i => {
+                string itemCatId = (i.Catelogid ?? "").ToString().Trim();
+                return itemCatId == searchCatId;
+            }).ToList();
+        }
+
+        // Apply text search filtering
         if (!string.IsNullOrEmpty(search))
         {
             var searchLower = search.ToLower();
@@ -7080,28 +7109,122 @@ app.MapPost("/api/item/response", async (ApprovalResponseRequest request, SqlCon
     try
     {
         await connection.OpenAsync();
-        string status = request.Status == "Approved" ? "Approved" : "Rejected";
+        string statusVal = request.Status == "Approved" ? "1" : "2";
+        string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
         
-        // Update Tbl_Productvariants
-        using (var cmd = new SqlCommand("UPDATE Tbl_Productvariants SET Managerapprovestatus = @Status WHERE Id = @Id", connection))
+        // 1. Save comments to Sp_Variantsetcomments
+        using (var cmd4 = new SqlCommand("Sp_Variantsetcomments", connection))
         {
-            // Assuming Productid in request mapped to Id for this context
-            cmd.Parameters.AddWithValue("@Status", status);
-            cmd.Parameters.AddWithValue("@Id", request.Productid); // Frontend passes internal Id as Productid for this endpoint
+            cmd4.CommandType = System.Data.CommandType.StoredProcedure;
+            cmd4.Parameters.AddWithValue("@Userid", request.Userid ?? "");
+            cmd4.Parameters.AddWithValue("@Accepted_Userid", "");
+            cmd4.Parameters.AddWithValue("@Approved_Userid", request.Approved_Userid ?? "");
+            cmd4.Parameters.AddWithValue("@Productid", request.Productid ?? "");
+            cmd4.Parameters.AddWithValue("@Productvariantsid", request.Id ?? "0");
+            cmd4.Parameters.AddWithValue("@Productsetid", "0");
+            cmd4.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+            cmd4.Parameters.AddWithValue("@Comments", request.Comments ?? "");
+            cmd4.Parameters.AddWithValue("@Commenttype", "Approve/Reject");
+            cmd4.Parameters.AddWithValue("@Variantorset", "Variant");
+            cmd4.Parameters.AddWithValue("@Status", statusVal);
+            cmd4.Parameters.AddWithValue("@Role", request.Approved_Role ?? "Manager");
+            cmd4.Parameters.AddWithValue("@Query", 1);
+            await cmd4.ExecuteNonQueryAsync();
+        }
+
+        // 2. Clear old comments (Query 6/7) if needed? The snippet doesn't actually use the emails for anything other than local variables.
+        // I'll skip the local variable fetches for now unless they are needed for side effects.
+        
+        // 3. Update status in Sp_Productvariants (Query 38)
+        if (!string.IsNullOrWhiteSpace(request.Id) && !string.IsNullOrWhiteSpace(request.Productid))
+        {
+            using (var cmd212 = new SqlCommand("Sp_Productvariants", connection))
+            {
+                cmd212.CommandType = System.Data.CommandType.StoredProcedure;
+                cmd212.Parameters.AddWithValue("@Id", request.Id);
+                cmd212.Parameters.AddWithValue("@Userid", "");
+                cmd212.Parameters.AddWithValue("@Productid", request.Productid);
+                cmd212.Parameters.AddWithValue("@Productname", "");
+                cmd212.Parameters.AddWithValue("@Varianttype", "");
+                cmd212.Parameters.AddWithValue("@Value", "");
+                cmd212.Parameters.AddWithValue("@Totalqty", "");
+                cmd212.Parameters.AddWithValue("@Noofqty_online", "");
+                cmd212.Parameters.AddWithValue("@Modelno", "");
+                cmd212.Parameters.AddWithValue("@Warehousecheck", "");
+                cmd212.Parameters.AddWithValue("@Batchno", "");
+                cmd212.Parameters.AddWithValue("@EANBarcodeno", "");
+                cmd212.Parameters.AddWithValue("@Isdelete", "");
+                cmd212.Parameters.AddWithValue("@Status", "");
+                cmd212.Parameters.AddWithValue("@Managerapprovestatus", statusVal);
+                cmd212.Parameters.AddWithValue("@Warehouseapprovestatus", "0");
+                cmd212.Parameters.AddWithValue("@Accountsapprovestatus", "0");
+                cmd212.Parameters.AddWithValue("@Parentid", "");
+                cmd212.Parameters.AddWithValue("@Ischild", "");
+                cmd212.Parameters.AddWithValue("@Date", "");
+                cmd212.Parameters.AddWithValue("@Query", 38);
+                await cmd212.ExecuteNonQueryAsync();
+            }
+        }
+
+        // 4. Record Inventory (Query 1)
+        using (var command1 = new SqlCommand("Sp_Inventory", connection))
+        {
+            command1.CommandType = System.Data.CommandType.StoredProcedure;
+            command1.Parameters.AddWithValue("@Id", "");
+            command1.Parameters.AddWithValue("@Productid", request.Productid);
+            command1.Parameters.AddWithValue("@Inventory_type", "1");
+            command1.Parameters.AddWithValue("@Inventory_date", currentTimestamp);
+            command1.Parameters.AddWithValue("@Productvariantsid", request.Id);
+            command1.Parameters.AddWithValue("@Total_qty", "0");
+            command1.Parameters.AddWithValue("@Billid", "0");
+            command1.Parameters.AddWithValue("@Warehouse_status", "1");
+            command1.Parameters.AddWithValue("@Isdelete", "0");
+            command1.Parameters.AddWithValue("@Status", "Transit");
+            command1.Parameters.AddWithValue("@Warehouseid", "1");
+            command1.Parameters.AddWithValue("@Query", 1);
+            await command1.ExecuteNonQueryAsync();
+        }
+
+        return Results.Ok(new { success = true, message = "Response successfully saved" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { success = false, message = ex.Message }, statusCode: 500);
+    }
+    finally
+    {
+        if (connection.State == System.Data.ConnectionState.Open) await connection.CloseAsync();
+    }
+});
+
+// POST: Send Edit Request for an already-approved Variant
+app.MapPost("/api/item/editrequest", async (EditRequestPayload request, SqlConnection connection) =>
+{
+    try
+    {
+        await connection.OpenAsync();
+        string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+
+        using (var cmd = new SqlCommand("Sp_Variantsetcomments", connection))
+        {
+            cmd.CommandType = System.Data.CommandType.StoredProcedure;
+            cmd.Parameters.AddWithValue("@Userid", request.Userid ?? "");
+            cmd.Parameters.AddWithValue("@Accepted_Userid", "");
+            cmd.Parameters.AddWithValue("@Approved_Userid", "");
+            cmd.Parameters.AddWithValue("@Productid", request.Productid ?? "");
+            cmd.Parameters.AddWithValue("@Productvariantsid", request.Id ?? "0");
+            cmd.Parameters.AddWithValue("@Productsetid", "0");
+            cmd.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+            cmd.Parameters.AddWithValue("@Comments", request.Comments ?? "");
+            cmd.Parameters.AddWithValue("@Commenttype", "Editrequest");
+            cmd.Parameters.AddWithValue("@Variantorset", "Variant");
+            cmd.Parameters.AddWithValue("@Status", "0");
+            cmd.Parameters.AddWithValue("@Role", request.Role ?? "User");
+            cmd.Parameters.AddWithValue("@Query", 1);
             await cmd.ExecuteNonQueryAsync();
         }
 
-        // Log
-        using (var logCmd = new SqlCommand("INSERT INTO Tbl_Productvariantssetlog (Productid, Userid, Actiontype, Date, Productvariantsid, Productsetid) VALUES (@Pid, @Uid, @Action, GETDATE(), @VarId, 0)", connection))
-        {
-            logCmd.Parameters.AddWithValue("@Pid", ""); // Generic
-            logCmd.Parameters.AddWithValue("@Uid", request.Approved_Userid ?? "ADMIN");
-            logCmd.Parameters.AddWithValue("@Action", status);
-            logCmd.Parameters.AddWithValue("@VarId", request.Productid);
-            await logCmd.ExecuteNonQueryAsync();
-        }
-
-        return Results.Ok(new { success = true, message = $"Item {status} successfully" });
+        return Results.Ok(new { success = true, message = "Edit request sent. Wait for manager approval" });
     }
     catch (Exception ex)
     {
@@ -11428,7 +11551,9 @@ public class TaskItemModel
     public string? Catelogid { get; set; }
 }
 
-record ApprovalResponseRequest(string Productid, string? Userid, string? Approved_Userid, string Status, string? Comments);
+record ApprovalResponseRequest(string Id, string Productid, string? Userid, string? Approved_Userid, string? Approved_Role, string Status, string? Comments);
+
+record EditRequestPayload(string? Id, string? Productid, string? Userid, string? Role, string? Comments);
 
 record ProcessEditReasonRequest(string Productid, string Userid, string? Editreason, string Type, string? Approved_userid, int Id, string Status);
 

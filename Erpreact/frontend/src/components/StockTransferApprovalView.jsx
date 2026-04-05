@@ -564,7 +564,7 @@ const StockTransferApprovalView = ({ transferId, onBack }) => {
             </Drawer>
 
             {/* Decision Dialog */}
-            <Dialog open={approvalDialogOpen} onClose={() => !isSubmitting && setApprovalDialogOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: '20px' } }}>
+            <Dialog open={approvalDialogOpen} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { !isSubmitting && setApprovalDialogOpen(false) } }} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: '20px' } }}>
                 <DialogTitle sx={{ bgcolor: decision === 'Approved' ? '#10b981' : '#ef4444', color: 'white' }}>
                     Confirm {decision}
                 </DialogTitle>

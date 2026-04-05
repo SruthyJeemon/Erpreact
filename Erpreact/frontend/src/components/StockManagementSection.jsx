@@ -563,9 +563,8 @@ const StockManagementSection = () => {
 
 
         {/* Stock Movement Modal */}
-        <Dialog 
-            open={isModalOpen} 
-            onClose={() => setIsModalOpen(false)}
+        <Dialog open={isModalOpen} 
+            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsModalOpen(false) } }}
             maxWidth="xl"
             fullWidth
             PaperProps={{

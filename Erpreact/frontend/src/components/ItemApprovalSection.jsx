@@ -34,6 +34,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 const ItemApprovalSection = ({ onNavigate }) => {
     const [items, setItems] = useState([]);
@@ -63,11 +64,13 @@ const ItemApprovalSection = ({ onNavigate }) => {
         setLoading(true);
         try {
             const currentUserId = user.Userid || user.userid || user.id || user.Id || '';
+            const catalogId = user.Catelogid || user.catelogid || '';
             const params = new URLSearchParams({
                 page: currentPage,
                 pageSize: itemsPerPage,
                 search: searchTerm,
-                currentUserId: currentUserId
+                currentUserId: currentUserId,
+                catelogid: catalogId
             });
             const response = await fetch(`${API_URL}/api/item/pending?${params}`);
             const result = await response.json();
@@ -90,6 +93,7 @@ const ItemApprovalSection = ({ onNavigate }) => {
     const openApprovalModal = (item, status) => {
         setModalData({
             itemId: item.Id || item.id,
+            productId: item.productid || item.Productid || '',
             creatorId: item.Userid || item.userid || '',
             status: status,
             comments: ''
@@ -101,9 +105,11 @@ const ItemApprovalSection = ({ onNavigate }) => {
         setLoading(true);
         try {
             const payload = {
-                Productid: modalData.itemId.toString(),
+                Id: modalData.itemId.toString(),
+                Productid: modalData.productId.toString(),
                 Userid: modalData.creatorId,
-                Approved_Userid: user.userid || 'ADMIN',
+                Approved_Userid: user.userid || user.Userid || 'ADMIN',
+                Approved_Role: user.role || user.Role || 'Manager',
                 Status: modalData.status,
                 Comments: modalData.comments
             };
@@ -336,7 +342,7 @@ const ItemApprovalSection = ({ onNavigate }) => {
                 )}
 
                 {/* Response Modal */}
-                <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+                <Dialog open={showModal} onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowModal(false) } }} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
                     <DialogTitle sx={{ bgcolor: '#2C3E50', color: '#fff', fontWeight: 700 }}>
                         {modalData.status === 'Approved' ? <CheckCircleIcon sx={{ verticalAlign: 'middle', mr: 1 }} /> : <CancelIcon sx={{ verticalAlign: 'middle', mr: 1 }} />}
                         {modalData.status} Item

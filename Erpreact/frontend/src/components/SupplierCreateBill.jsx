@@ -2117,9 +2117,8 @@ const SupplierCreateBill = ({ onBack, supplierId, billId }) => {
             </Box>
 
             {/* Serial Number Modal */}
-            <Dialog
-                open={serialModalOpen}
-                onClose={handleCloseSerialModal}
+            <Dialog open={serialModalOpen}
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseSerialModal(event, reason); } }}
                 maxWidth="sm"
                 fullWidth
                 PaperProps={{

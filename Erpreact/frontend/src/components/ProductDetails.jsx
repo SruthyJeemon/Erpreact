@@ -389,12 +389,30 @@ const ProductDetails = () => {
         setShowAddVariantModal(true);
     };
 
-    const handleEditVariantFromView = (variant) => {
+    const handleEditVariantFromView = async (variant) => {
         if (!variant) return;
 
         console.log("=== EDIT VARIANT DEBUG ===");
-        console.log("Full Variant Object:", JSON.stringify(variant, null, 2));
-        console.log("Global Warehouse Locations:", warehouseLocations);
+        const currentVariantId = variant.id || variant.Id;
+
+        // Fetch latest marketplace data for this specific variant
+        let variantSpecificMarketplaces = [];
+        try {
+            const mpRes = await fetch(`${API_URL}/api/product/marketplaces/${currentVariantId}`);
+            if (mpRes.ok) {
+                variantSpecificMarketplaces = await mpRes.json();
+            }
+        } catch (err) {
+            console.error("Error fetching variant marketplaces:", err);
+        }
+
+        // Merge fetched marketplaces into variant object
+        const variantWithDetails = { 
+            ...variant, 
+            Marketplaces: variantSpecificMarketplaces.length > 0 ? variantSpecificMarketplaces : (variant.Marketplaces || []) 
+        };
+        
+        variant = variantWithDetails; // Use the enriched variant object
 
         // 1. Resolve Brand ID
         let brandId = '';
@@ -428,7 +446,6 @@ const ProductDetails = () => {
         }
 
         // 3. Map Images & Videos: Filter from global galleryImages state
-        const currentVariantId = variant.id || variant.Id;
         const matchingGalleryItems = galleryImages.filter(img => 
             img.variantId?.toString() === currentVariantId?.toString()
         );
@@ -924,10 +941,15 @@ const ProductDetails = () => {
                     Cost: variantFormData.cost || '0',
                     Expense_account: variantFormData.expenseAccount || ''
                 },
-                tableData1: (variantFormData.variants || []).map(v => ({
+                tableData1: (variantFormData.variants && variantFormData.variants.length > 0) ? variantFormData.variants.map(v => ({
+                    column_0: isUpdate ? variantFormData.variantId.toString() : '',
                     column_1: v.name,
                     column_2: v.value
-                })),
+                })) : [{
+                    column_0: isUpdate ? variantFormData.variantId.toString() : '',
+                    column_1: '',
+                    column_2: ''
+                }],
                 tableData: (variantFormData.marketPlaces || []).map(mp => ({
                     Marketplace1: mp.name,
                     Status: mp.selected,
@@ -971,6 +993,14 @@ const ProductDetails = () => {
             videoFiles.forEach((fileObj, index) => {
                 formData.append(`video${index}`, fileObj.file);
             });
+
+            // Append required tableid arrays for backend to process new uploads correctly
+            if (imageFiles.length > 0) {
+                formData.append('tableid', imageFiles.map(() => 'new').join(','));
+            }
+            if (videoFiles.length > 0) {
+                formData.append('tablevideoid', videoFiles.map(() => 'new').join(','));
+            }
 
             console.log('Sending data to API:', {
                 jsonData,
@@ -2127,9 +2157,8 @@ const ProductDetails = () => {
                 {!isTablet && <ProductListSidebar />}
 
                 {/* Mobile Drawer */}
-                <Dialog
-                    open={isSidebarOpen && isTablet}
-                    onClose={() => setIsSidebarOpen(false)}
+                <Dialog open={isSidebarOpen && isTablet}
+                    onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsSidebarOpen(false) } }}
                     fullWidth
                     maxWidth="xs"
                     PaperProps={{
@@ -2796,8 +2825,50 @@ const ProductDetails = () => {
                                             variant="contained"
                                             startIcon={<AddIcon />}
                                             onClick={() => {
+                                                const approvedItem = variants.find(v => (v.managerStatus || v.ManagerStatus)?.toLowerCase() === 'approved');
                                                 setIsEditingSet(false);
+                                                
+                                                // Reset and pre-fill items if approved item found
+                                                const initialItems = approvedItem ? [{
+                                                    id: approvedItem.Id || approvedItem.id,
+                                                    name: approvedItem.Productname || approvedItem.productname || (product?.Product_Name || product?.product_name || ''),
+                                                    itemName: approvedItem.Itemname || approvedItem.itemname || '',
+                                                    variantType: approvedItem.Varianttype || approvedItem.varianttype || '',
+                                                    qty: 1,
+                                                    price: approvedItem.Price || 0
+                                                }] : [];
+
+                                                setComboFormData({
+                                                    setId: null,
+                                                    setName: '',
+                                                    modelNo: '',
+                                                    batchNo: '',
+                                                    ean: '',
+                                                    description: '',
+                                                    shortDescription: '',
+                                                    wholesalePrice: '',
+                                                    retailPrice: '',
+                                                    onlinePrice: '',
+                                                    length: 0,
+                                                    width: 0,
+                                                    height: 0,
+                                                    weight: 0,
+                                                    hsCode: '',
+                                                    countryOfOrigin: '',
+                                                    marketPlaces: [
+                                                        { name: 'Danube', selected: false, link: '' },
+                                                        { name: 'Website', selected: false, link: '' },
+                                                        { name: 'Noon', selected: false, link: '' },
+                                                        { name: 'Amazon', selected: false, link: '' }
+                                                    ],
+                                                    items: initialItems,
+                                                    media: [],
+                                                    imageFiles: [],
+                                                    videoFiles: []
+                                                });
+                                                
                                                 setShowAddSetModal(true);
+                                                setComboTab(0);
                                             }}
                                             sx={{
                                                 background: 'linear-gradient(135deg, #0f172a 0%, #334155 100%)',
@@ -2886,9 +2957,8 @@ const ProductDetails = () => {
 
                             {/* View Set Modal */}
                             {showViewSetModal && selectedSetForView && (
-                                <Dialog
-                                    open={showViewSetModal}
-                                    onClose={() => setShowViewSetModal(false)}
+                                <Dialog open={showViewSetModal}
+                                    onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowViewSetModal(false) } }}
                                     maxWidth="md"
                                     fullWidth
                                     PaperProps={{ sx: { borderRadius: '16px', overflow: 'hidden', boxShadow: '0 24px 80px rgba(2,6,23,0.35)' } }}
@@ -3215,9 +3285,8 @@ const ProductDetails = () => {
                 {/* Add Product Modal (Standardized) */}
                 {
                     showAddModal && (
-                        <Dialog
-                            open={showAddModal}
-                            onClose={() => setShowAddModal(false)}
+                        <Dialog open={showAddModal}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowAddModal(false) } }}
                             maxWidth="md"
                             fullWidth
                             PaperProps={{
@@ -3405,7 +3474,7 @@ const ProductDetails = () => {
                     showModal && (
                         <Dialog
                             open={showModal}
-                            onClose={() => setShowModal(false)}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick') setShowModal(false); }}
                             maxWidth="md"
                             fullWidth
                             fullScreen={isMobile}
@@ -3881,7 +3950,7 @@ const ProductDetails = () => {
                     showAddVariantModal && (
                         <Dialog
                             open={showAddVariantModal}
-                            onClose={handleCloseAddVariant}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick') handleCloseAddVariant(event, reason); }}
                             maxWidth="md"
                             fullWidth
                             PaperProps={{
@@ -4966,9 +5035,8 @@ const ProductDetails = () => {
                 {/* View Variant Modal */}
                 {
                     showViewVariantModal && selectedVariant && (
-                        <Dialog
-                            open={showViewVariantModal}
-                            onClose={() => setShowViewVariantModal(false)}
+                        <Dialog open={showViewVariantModal}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowViewVariantModal(false) } }}
                             maxWidth="md"
                             fullWidth
                             PaperProps={{
@@ -5435,9 +5503,8 @@ const ProductDetails = () => {
                 {/* Image Slideshow Modal */}
                 {
                     showSlideshow && galleryImages.length > 0 && (
-                        <Dialog
-                            open={showSlideshow}
-                            onClose={() => setShowSlideshow(false)}
+                        <Dialog open={showSlideshow}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowSlideshow(false) } }}
                             maxWidth="xl"
                             fullWidth
                             PaperProps={{
@@ -5486,9 +5553,8 @@ const ProductDetails = () => {
                 {/* Reason Modal */}
                 {
                     showReasonModal && (
-                        <Dialog
-                            open={showReasonModal}
-                            onClose={() => setShowReasonModal(false)}
+                        <Dialog open={showReasonModal}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowReasonModal(false) } }}
                             maxWidth="sm"
                             fullWidth
                             PaperProps={{
@@ -5546,9 +5612,8 @@ const ProductDetails = () => {
                 {/* Add Set/Combo Modal */}
                 {
                     showAddSetModal && (
-                        <Dialog
-                            open={showAddSetModal}
-                            onClose={() => setShowAddSetModal(false)}
+                        <Dialog open={showAddSetModal}
+                            onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowAddSetModal(false) } }}
                             maxWidth="lg"
                             fullWidth
                             PaperProps={{
@@ -5633,7 +5698,14 @@ const ProductDetails = () => {
                                                 </Box>
                                                 <Box sx={{ mb: 1 }}>
                                                     <Autocomplete
-                                                        options={itemSearchResults}
+                                                        options={itemSearchResults.length > 0 ? itemSearchResults : variants.filter(v => (v.managerStatus || v.ManagerStatus)?.toLowerCase() === 'approved').map(v => ({
+                                                            ...v,
+                                                            itemname: v.itemname || v.Itemname,
+                                                            productname: product?.Product_Name || product?.product_name || '',
+                                                            Id: v.id || v.Id,
+                                                            Itemname: v.itemname || v.Itemname,
+                                                            Productname: product?.Product_Name || product?.product_name || ''
+                                                        }))}
                                                         getOptionLabel={(option) => `${option.Itemname || option.itemname || ''} - ${option.Productname || option.productname || ''}`}
                                                         onInputChange={handleSetItemSearch}
                                                         onChange={(e, val) => handleAddItemToSet(val)}

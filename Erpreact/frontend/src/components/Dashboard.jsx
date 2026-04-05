@@ -771,7 +771,8 @@ const Dashboard = () => {
     }
     if (activeSection === 'approval-item-hub' || activeSection === 'dashboard') {
       const currentUserId = user.Userid || user.userid || user.id || user.Id || '';
-      fetch(`${API_URL}/api/item/pending?pageSize=1&currentUserId=${currentUserId}`)
+      const catalogId = user.Catelogid || user.catelogid || '';
+      fetch(`${API_URL}/api/item/pending?pageSize=1&currentUserId=${currentUserId}&catelogid=${catalogId}`)
         .then(res => res.json())
         .then(data => {
           if (data && typeof data.totalCount === 'number') {
@@ -1253,9 +1254,13 @@ const Dashboard = () => {
           // Restrict Packinglist visibility to Warehouse staff only
           if (submenus && submenus.length > 0) {
             const roleNameLower = (userRole || '').toString().toLowerCase();
+            const normalizedRole = roleNameLower.replace(/\s|_/g, '');
             submenus = submenus.filter(sm => {
               if ((sm.id || '').toLowerCase() === 'stock-packinglist') {
-                return roleNameLower === 'warehouse staff' || roleNameLower === 'warehouse' || roleNameLower === 'warehouse-staff';
+                return normalizedRole.includes('warehousestaff') ||
+                  normalizedRole === 'warehouse' ||
+                  normalizedRole === 'warehouse-staff' ||
+                  normalizedRole === 'whstaff';
               }
               return true;
             });
@@ -1337,6 +1342,25 @@ const Dashboard = () => {
             ]
           };
           menuItemsList.push(inventoryModule);
+        }
+
+        // Inject Packing List submenu for Warehouse Staff roles if missing
+        if (inventoryModule) {
+          const roleNameLower = (userRole || '').toString().toLowerCase().trim();
+          const normalizedRole = roleNameLower.replace(/\s|_/g, '');
+          const isWarehouseStaff =
+            normalizedRole.includes('warehousestaff') ||
+            normalizedRole === 'warehouse' ||
+            normalizedRole === 'warehouse-staff' ||
+            normalizedRole === 'whstaff';
+          const hasPackingList = inventoryModule.submenus.some(sm => (sm.id || '').toLowerCase() === 'stock-packinglist');
+          if (isWarehouseStaff && !hasPackingList) {
+            inventoryModule.submenus.push({
+              id: 'stock-packinglist',
+              label: 'Packing List',
+              icon: getIconForMenu('Stock', 'submodule')
+            });
+          }
         }
 
         // Always add Pickup Notification if not present, especially for Salescoordinators and Admin
@@ -2419,7 +2443,13 @@ const Dashboard = () => {
             {(() => {
               const currentUser = user || {};
               const userRoleName = (currentUser.Role || currentUser.role || '').toString().toLowerCase();
-              if (userRoleName !== 'warehouse staff' && userRoleName !== 'warehouse' && userRoleName !== 'warehouse-staff') {
+              const normalizedRole = userRoleName.replace(/\s|_/g, '');
+              if (
+                !(normalizedRole.includes('warehousestaff') ||
+                  normalizedRole === 'warehouse' ||
+                  normalizedRole === 'warehouse-staff' ||
+                  normalizedRole === 'whstaff')
+              ) {
                 return <div style={{ padding: 16, color: '#b91c1c' }}>Access denied: Warehouse staff only.</div>;
               }
               return <PackingListSection />;
@@ -2701,7 +2731,7 @@ const Dashboard = () => {
               <p className="section-description">Manage product variant (SKU) creation and inventory entry approvals.</p>
 
               <div className="approval-hub-grid">
-                <div className="hub-card-modern" onClick={() => setActiveSection('approval-item-request')}>
+                <div className="hub-card-modern" onClick={() => { setActiveSection('approval-item-request'); navigate('/approval-item-request'); }}>
                   <div className="hub-icon-wrap" style={{ background: '#ecfdf5', color: '#10b981' }}>
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
                   </div>
@@ -2744,7 +2774,7 @@ const Dashboard = () => {
 
         {activeSection === 'approval-item-request' && (
           <div className="admin-page-container">
-            <ItemApprovalSection onNavigate={setActiveSection} />
+            <ItemApprovalSection onNavigate={() => { setActiveSection('approval-item-hub'); navigate('/approval-item-hub'); }} />
           </div>
         )}
 

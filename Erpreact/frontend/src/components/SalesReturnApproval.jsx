@@ -420,9 +420,8 @@ const SalesReturnApproval = () => {
             </Paper>
 
             {/* View Details Modal */}
-            <Dialog 
-                open={isViewModalOpen} 
-                onClose={() => setIsViewModalOpen(false)}
+            <Dialog open={isViewModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setIsViewModalOpen(false) } }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{
@@ -541,9 +540,8 @@ const SalesReturnApproval = () => {
             </Dialog>
 
             {/* Receipt Modal */}
-            <Dialog 
-                open={isReceiptModalOpen} 
-                onClose={() => !isProcessing && setIsReceiptModalOpen(false)}
+            <Dialog open={isReceiptModalOpen} 
+                onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { !isProcessing && setIsReceiptModalOpen(false) } }}
                 maxWidth="xl"
                 fullWidth
                 PaperProps={{
