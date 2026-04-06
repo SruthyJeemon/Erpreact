@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import DataTableFooter from './DataTableFooter';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useDateFormat } from '../hooks/useDateFormat';
@@ -235,10 +235,12 @@ const ProductDetails = () => {
             { name: 'Noon', selected: false, link: '' },
             { name: 'Amazon', selected: false, link: '' }
         ],
-        items: [], // { id, name, qty, price, itemName }
+        items: [], // { setItemId, id (variant), name, qty, price, itemName }
         media: [], // For preview
         imageFiles: [], // Actual files {file, base64, name}
-        videoFiles: [] // Actual files
+        videoFiles: [], // Actual files
+        setStatus: 'Active',
+        workStatus: 0
     });
     const [comboTab, setComboTab] = useState(0); // For tab navigation in modal
     const [itemSearchTerm, setItemSearchTerm] = useState('');
@@ -252,11 +254,97 @@ const ProductDetails = () => {
     const [selectedSetForView, setSelectedSetForView] = useState(null);
     const [isEditingSet, setIsEditingSet] = useState(false);
     const [viewSetTab, setViewSetTab] = useState(0);
+    const [viewSetDetailLoading, setViewSetDetailLoading] = useState(false);
+    /** Keys `${productId}:${setId}` — edit request already sent this session (also verified via API). */
+    const pendingSetEditRequestKeysRef = useRef(new Set());
 
-    const handleOpenViewSet = (setRow) => {
-        setSelectedSetForView(setRow);
+    /** Workstatus: 1 = approved, 0 = pending, 3 (and legacy 2) = rejected */
+    const getSetWorkStatusChip = (ws) => {
+        const n = Number(ws);
+        if (n === 1) return { label: 'Approved', color: 'success', sx: { bgcolor: '#dcfce7', color: '#166534', fontWeight: 800 } };
+        if (n === 3 || n === 2) return { label: 'Rejected', color: 'error', sx: { bgcolor: '#fee2e2', color: '#991b1b', fontWeight: 800 } };
+        return { label: 'Pending', color: 'warning', sx: { bgcolor: '#fef9c3', color: '#854d0e', fontWeight: 800 } };
+    };
+
+    const filterSetsList = (list) => {
+        const q = searchTerm.trim().toLowerCase();
+        if (!q) return list;
+        return list.filter((s) => {
+            const st = getSetWorkStatusChip(s.workstatus).label.toLowerCase();
+            return [s.name, s.items, st].some((x) => String(x ?? '').toLowerCase().includes(q));
+        });
+    };
+
+    const handleOpenViewSet = async (setRow) => {
+        const sid = setRow.id ?? setRow.Id;
+        setSelectedSetForView({
+            ...setRow,
+            id: sid,
+            ownerUserid: setRow.Userid ?? setRow.userid
+        });
         setShowViewSetModal(true);
         setViewSetTab(0);
+        setViewSetDetailLoading(true);
+        try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const res = await fetch(`${API_URL}/api/product/productset/${sid}`);
+            const data = await res.json();
+            if (res.ok && data.success && data.set) {
+                const s = data.set;
+                const itemsList = (data.items || []).map(it => ({
+                    setItemId: it.Id ?? it.id,
+                    id: it.Productvariantsid ?? it.productvariantsid,
+                    itemName: it.Itemname ?? it.itemname ?? '',
+                    qty: it.Qty ?? it.qty ?? 1
+                }));
+                const piecesLine = itemsList.length
+                    ? itemsList.map(i => (i.itemName ? `${i.itemName} × ${i.qty}` : '')).filter(Boolean).join(', ')
+                    : (s.Numberofpieces != null && s.Numberofpieces !== '' ? `${s.Numberofpieces} pc(s)` : '—');
+
+                setSelectedSetForView({
+                    id: s.Id ?? s.id ?? sid,
+                    productId: s.Productid ?? s.productid ?? productId,
+                    ownerUserid: s.Userid ?? s.userid ?? setRow.Userid ?? setRow.userid,
+                    name: s.Setname ?? s.setname,
+                    setName: s.Setname ?? s.setname,
+                    items: piecesLine,
+                    itemsList,
+                    workstatus: s.Workstatus ?? s.workstatus ?? 0,
+                    setStatus: s.Status ?? s.status ?? 'Active',
+                    modelNo: s.Modelno ?? s.modelno,
+                    batchNo: s.Batchno ?? s.batchno,
+                    ean: s.EANBarcodeno ?? s.eanBarcodeno,
+                    description: s.Description ?? s.description,
+                    shortDescription: s.Short_description ?? s.short_description,
+                    wholesalePrice: s.Wholesalepriceset ?? s.wholesalepriceset,
+                    retailPrice: s.Retailpriceset ?? s.retailpriceset,
+                    onlinePrice: s.Onlinepriceset ?? s.onlinepriceset,
+                    marketPlaces: (data.marketPlaces || []).map(mp => ({
+                        name: mp.Marketplacename ?? mp.marketplacename ?? '',
+                        selected: String(mp.Visibility ?? mp.visibility) === '1' || mp.Visibility === true,
+                        link: mp.Link ?? mp.link ?? ''
+                    })),
+                    imageFiles: (data.gallery || [])
+                        .filter(g => Number(g.File_id ?? g.file_id) === 3)
+                        .map(g => {
+                            const p = g.Gallery_file ?? g.gallery_file ?? '';
+                            const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                            let preview = p;
+                            if (p && !p.startsWith('http')) {
+                                let fp = p;
+                                if (!fp.startsWith('/')) fp = '/' + fp;
+                                preview = `${API_BASE}${fp}`;
+                            }
+                            return { preview: preview || 'https://picsum.photos/400/300?text=No+Image' };
+                        }),
+                    videoFiles: (data.gallery || []).filter(g => Number(g.File_id ?? g.file_id) === 2)
+                });
+            }
+        } catch (err) {
+            console.error('Load set detail', err);
+        } finally {
+            setViewSetDetailLoading(false);
+        }
     };
 
     const handleEditFromViewSet = () => {
@@ -283,7 +371,9 @@ const ProductDetails = () => {
             marketPlaces: s.marketPlaces ?? prev.marketPlaces,
             items: Array.isArray(s.itemsList) ? s.itemsList : (Array.isArray(s.items) ? s.items : prev.items),
             imageFiles: s.imageFiles ?? prev.imageFiles,
-            videoFiles: s.videoFiles ?? prev.videoFiles
+            videoFiles: s.videoFiles ?? prev.videoFiles,
+            setStatus: s.setStatus ?? s.Status ?? 'Active',
+            workStatus: Number(s.workstatus ?? s.workStatus ?? 0)
         }));
         setIsEditingSet(true);
         setShowViewSetModal(false);
@@ -291,10 +381,318 @@ const ProductDetails = () => {
         setComboTab(0);
     };
 
-    const handleDeleteSet = (setId) => {
-        // Optimistic local delete; integrate API call if available
-        setSets(prev => prev.filter(s => (s.id ?? s.Id) !== setId));
-        setShowViewSetModal(false);
+    /** Legacy #btneditsetcheck: approved sets cannot edit in place — send Sp_Variantsetcomments edit request (Saveseteditcomments). */
+    const handleEditFromViewSetClick = async () => {
+        if (!selectedSetForView) return;
+        const ws = Number(selectedSetForView.workstatus ?? 0);
+        if (ws === 1) {
+            const bumpSwalAboveMui = () => {
+                document.querySelectorAll('.swal2-container').forEach((el) => {
+                    el.style.setProperty('z-index', '20000', 'important');
+                });
+            };
+            const alreadySentMessage = {
+                title: 'Edit request already sent',
+                text: 'You have already sent an edit request for this set. Please wait for manager approval.',
+                icon: 'info'
+            };
+            let uid = '';
+            try {
+                const u = JSON.parse(localStorage.getItem('user') || '{}');
+                uid = u.Userid || u.userid || '';
+            } catch (_) {
+                /* ignore */
+            }
+            if (!uid) {
+                Swal.fire('Error', 'Could not resolve user id.', 'error');
+                return;
+            }
+            const pid = String(selectedSetForView.productId || selectedSetForView.productid || productId || '');
+            const sid = selectedSetForView.id ?? selectedSetForView.Id;
+            if (!pid || sid == null || sid === '') {
+                Swal.fire('Error', 'Missing product or set id.', 'error');
+                return;
+            }
+            const sessionKey = `${pid}:${sid}`;
+            if (pendingSetEditRequestKeysRef.current.has(sessionKey)) {
+                await Swal.fire({ ...alreadySentMessage, didOpen: bumpSwalAboveMui });
+                return;
+            }
+            try {
+                const checkRes = await fetch(
+                    `${API_URL}/api/product/sets/pending-edit-request?${new URLSearchParams({
+                        setid: String(sid),
+                        userid: String(uid)
+                    })}`
+                );
+                const checkData = await checkRes.json().catch(() => ({}));
+                if (checkRes.ok && checkData.pending === true) {
+                    pendingSetEditRequestKeysRef.current.add(sessionKey);
+                    await Swal.fire({ ...alreadySentMessage, didOpen: bumpSwalAboveMui });
+                    return;
+                }
+            } catch (_) {
+                /* allow flow if check fails */
+            }
+            const r1 = await Swal.fire({
+                title: 'Updating is not possible',
+                text: 'This set is already approved. Do you want to send an edit request to managers?',
+                icon: 'info',
+                showCancelButton: true,
+                confirmButtonText: 'Yes',
+                cancelButtonText: 'Cancel',
+                returnFocus: false,
+                didOpen: bumpSwalAboveMui
+            });
+            if (!r1.isConfirmed) {
+                await Swal.fire('Cancelled', 'Your data is safe.', 'info');
+                return;
+            }
+            const r2 = await Swal.fire({
+                title: 'Reason for edit request',
+                input: 'textarea',
+                inputPlaceholder: 'Describe what you need to change...',
+                showCancelButton: true,
+                confirmButtonText: 'Send request',
+                returnFocus: false,
+                inputAttributes: { 'aria-label': 'Reason for edit request', autocapitalize: 'off', autocomplete: 'off' },
+                didOpen: () => {
+                    bumpSwalAboveMui();
+                    requestAnimationFrame(() => {
+                        const ta = document.querySelector('.swal2-textarea');
+                        if (ta) {
+                            ta.focus();
+                            ta.removeAttribute('readonly');
+                        }
+                    });
+                },
+                inputValidator: (v) => (!String(v || '').trim() ? 'Please enter a reason' : null)
+            });
+            if (!r2.isConfirmed) return;
+            try {
+                const res = await fetch(`${API_URL}/api/product/sets/edit-request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        Productid: String(pid),
+                        Userid: String(uid),
+                        SetId: String(sid),
+                        Comments: String(r2.value || '').trim()
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.success !== false) {
+                    pendingSetEditRequestKeysRef.current.add(sessionKey);
+                    await Swal.fire(
+                        'Success',
+                        data.message || 'Edit request sent. Wait for manager approval.',
+                        'success'
+                    );
+                    setShowViewSetModal(false);
+                } else if (res.status === 409 || /already sent/i.test(String(data.message || ''))) {
+                    pendingSetEditRequestKeysRef.current.add(sessionKey);
+                    await Swal.fire({ ...alreadySentMessage, didOpen: bumpSwalAboveMui });
+                } else {
+                    Swal.fire('Error', data.message || 'Request failed.', 'error');
+                }
+            } catch (e) {
+                Swal.fire('Error', String(e?.message || e), 'error');
+            }
+            return;
+        }
+        handleEditFromViewSet();
+    };
+
+    /** Legacy deleteset / checkdeleterequestset — pending set: hard delete; approved/rejected: delete-request flow. */
+    const handleDeleteSetClick = async () => {
+        if (!selectedSetForView) return;
+        const bumpSwalAboveMui = () => {
+            document.querySelectorAll('.swal2-container').forEach((el) => {
+                el.style.setProperty('z-index', '20000', 'important');
+            });
+        };
+        let uid = '';
+        try {
+            const u = JSON.parse(localStorage.getItem('user') || '{}');
+            uid = u.Userid || u.userid || '';
+        } catch (_) {
+            /* ignore */
+        }
+        if (!uid) {
+            Swal.fire('Error', 'Could not resolve user id.', 'error');
+            return;
+        }
+        const ownerId = String(
+            selectedSetForView.ownerUserid ??
+                selectedSetForView.userid ??
+                selectedSetForView.Userid ??
+                ''
+        ).trim();
+        if (String(uid).trim() !== ownerId) {
+            await Swal.fire({
+                title: 'Cancelled',
+                text: 'Deletion is not possible',
+                icon: 'error',
+                didOpen: bumpSwalAboveMui
+            });
+            return;
+        }
+        const setId = String(selectedSetForView.id ?? selectedSetForView.Id ?? '');
+        const productIdStr = String(selectedSetForView.productId || selectedSetForView.productid || productId || '');
+        if (!setId || !productIdStr) {
+            Swal.fire('Error', 'Missing product or set id.', 'error');
+            return;
+        }
+        const ws = Number(selectedSetForView.workstatus ?? 0);
+        const isPending = ws === 0;
+
+        if (isPending) {
+            const r1 = await Swal.fire({
+                title: `Are you sure you want to delete the product set "${selectedSetForView.name || selectedSetForView.setName || 'this set'}"?`,
+                icon: 'info',
+                input: 'text',
+                inputLabel: 'Type YES (capital letters) to confirm',
+                showCancelButton: true,
+                confirmButtonText: 'Submit',
+                cancelButtonText: 'Cancel',
+                returnFocus: false,
+                didOpen: bumpSwalAboveMui,
+                inputValidator: (value) =>
+                    String(value || '').trim().toUpperCase() === 'YES'
+                        ? null
+                        : 'Please type YES exactly to confirm deletion.'
+            });
+            if (!r1.isConfirmed) {
+                await Swal.fire({
+                    title: 'Cancelled',
+                    text: 'Your data is safe.',
+                    icon: 'info',
+                    didOpen: bumpSwalAboveMui
+                });
+                return;
+            }
+            try {
+                const res = await fetch(`${API_URL}/api/product/sets/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        setId,
+                        userid: String(uid),
+                        productid: productIdStr
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.success !== false) {
+                    setSets((prev) => prev.filter((s) => String(s.id ?? s.Id) !== setId));
+                    setShowViewSetModal(false);
+                    await Swal.fire({
+                        title: 'Success',
+                        text: data.message || 'Deleted successfully',
+                        icon: 'success',
+                        didOpen: bumpSwalAboveMui
+                    });
+                } else {
+                    Swal.fire('Error', data.message || 'Delete failed.', 'error');
+                }
+            } catch (e) {
+                Swal.fire('Error', String(e?.message || e), 'error');
+            }
+            return;
+        }
+
+        try {
+            const checkRes = await fetch(`${API_URL}/api/product/sets/check-deleterequest`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ setid: setId })
+            });
+            const checkData = await checkRes.json().catch(() => ({}));
+            const list1 = checkData.List1 ?? checkData.list1;
+            const hasPending =
+                Array.isArray(list1) && list1.length > 0;
+            if (hasPending) {
+                await Swal.fire({
+                    title: 'Cancelled',
+                    text: 'You have already sent the delete request for this item.',
+                    icon: 'error',
+                    didOpen: bumpSwalAboveMui
+                });
+                return;
+            }
+        } catch (e) {
+            console.error('check-deleterequest', e);
+        }
+
+        const r2 = await Swal.fire({
+            title:
+                'Deleting is not possible. This set is already approved or rejected. Do you want to send a delete request to managers?',
+            icon: 'info',
+            input: 'text',
+            inputLabel: 'Type YES (capital letters) to confirm',
+            showCancelButton: true,
+            confirmButtonText: 'Submit',
+            cancelButtonText: 'Cancel',
+            returnFocus: false,
+            didOpen: bumpSwalAboveMui,
+            inputValidator: (value) =>
+                String(value || '').trim().toUpperCase() === 'YES'
+                    ? null
+                    : 'Please type YES exactly to send a delete request.'
+        });
+        if (!r2.isConfirmed) return;
+        const r3 = await Swal.fire({
+            title: 'Reason for delete request',
+            input: 'textarea',
+            inputPlaceholder: 'Describe why this set should be deleted...',
+            showCancelButton: true,
+            confirmButtonText: 'Send request',
+            returnFocus: false,
+            inputAttributes: { 'aria-label': 'Reason for delete request', autocapitalize: 'off', autocomplete: 'off' },
+            didOpen: () => {
+                bumpSwalAboveMui();
+                requestAnimationFrame(() => {
+                    const ta = document.querySelector('.swal2-textarea');
+                    if (ta) {
+                        ta.focus();
+                        ta.removeAttribute('readonly');
+                    }
+                });
+            },
+            inputValidator: (v) => (!String(v || '').trim() ? 'Please enter a reason' : null)
+        });
+        if (!r3.isConfirmed) return;
+        try {
+            const res = await fetch(`${API_URL}/api/product/sets/delete-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    Productid: productIdStr,
+                    Userid: String(uid),
+                    SetId: setId,
+                    Comments: String(r3.value || '').trim()
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success !== false) {
+                await Swal.fire(
+                    'Success',
+                    data.message || 'Delete request sent. Wait for manager approval.',
+                    'success'
+                );
+                setShowViewSetModal(false);
+            } else if (res.status === 409) {
+                await Swal.fire({
+                    title: 'Already requested',
+                    text: data.message || 'You have already sent a delete request for this set.',
+                    icon: 'info',
+                    didOpen: bumpSwalAboveMui
+                });
+            } else {
+                Swal.fire('Error', data.message || 'Request failed.', 'error');
+            }
+        } catch (e) {
+            Swal.fire('Error', String(e?.message || e), 'error');
+        }
     };
 
     const paginate = (items) => {
@@ -966,6 +1364,28 @@ const ProductDetails = () => {
 
             console.log("Saving Variant Data:", jsonData);
 
+            // Legacy flow: block save if the same variant values already exist
+            try {
+                const beforeRes = await fetch(`${API_URL}/api/product/getBeforevariantvaluesedit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(jsonData)
+                });
+                const beforeData = await beforeRes.json().catch(() => ({}));
+                const msg = String(beforeData.message || '').trim();
+                if (msg) {
+                    Swal.fire({
+                        title: 'alert!',
+                        text: msg,
+                        icon: 'error'
+                    });
+                    return;
+                }
+            } catch (e) {
+                // If the precheck fails, continue with save (same as legacy UX expectations)
+                console.warn('getBeforevariantvaluesedit failed:', e);
+            }
+
             // Add JSON data to FormData
             formData.append('jsonData', JSON.stringify(jsonData));
 
@@ -1183,6 +1603,31 @@ const ProductDetails = () => {
         return `${API_URL}${finalPath}`;
     };
 
+    const fetchProductSets = async (pid) => {
+        if (!pid) {
+            setSets([]);
+            return;
+        }
+        try {
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const res = await fetch(`${API_URL}/api/product/productsets/${encodeURIComponent(pid)}`);
+            const data = await res.json();
+            const rows = data.List1 || data.list1 || [];
+            setSets(
+                rows.map((row) => ({
+                    id: row.Id ?? row.id,
+                    name: row.Setname ?? row.setname ?? '',
+                    items: row.IncludedItemsSummary ?? row.includedItemsSummary ?? '—',
+                    workstatus: row.Workstatus ?? row.workstatus ?? 0,
+                    raw: row
+                }))
+            );
+        } catch (e) {
+            console.error('fetchProductSets', e);
+            setSets([]);
+        }
+    };
+
     const fetchProductDetails = async () => {
         if (!productId) {
             setLoading(false);
@@ -1265,10 +1710,7 @@ const ProductDetails = () => {
                         setVariants(variantsData);
                     }
 
-                    setSets([
-                        { id: 1, name: 'Combo Pack A', items: 'Product + Case', discount: '10%' },
-                        { id: 2, name: 'Premium Bundle', items: 'Product + Warranty + Support', discount: '15%' }
-                    ]);
+                    await fetchProductSets(productId);
                 } catch (err) {
                     console.error("Error fetching extra details:", err);
                 }
@@ -1767,36 +2209,61 @@ const ProductDetails = () => {
             const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
             const user = JSON.parse(localStorage.getItem('user') || '{}');
 
+            const toServerNumber = (v) => {
+                const x = parseFloat(String(v ?? '').replace(/,/g, '').trim());
+                return Number.isFinite(x) ? x : 0;
+            };
+
+            const piecesTotal = comboFormData.items.reduce((sum, it) => sum + toServerNumber(it.qty), 0);
+            const numberOfPieces = String(piecesTotal > 0 ? piecesTotal : comboFormData.items.length);
+            const productName =
+                product?.Product_Name || product?.product_name || product?.Product_name || '';
+
             const payload = {
                 formData: {
                     Userid: user.Userid || user.userid || 'ADMIN',
+                    Productid: productId,
+                    Productname: productName,
                     Setname: comboFormData.setName,
+                    Numberofpieces: numberOfPieces,
                     Modelno: comboFormData.modelNo,
                     Batchno: comboFormData.batchNo,
                     EANBarcodeno: comboFormData.ean,
                     Description: comboFormData.description,
-                    Wholesalepriceset: comboFormData.wholesalePrice || 0,
-                    Retailpriceset: comboFormData.retailPrice || 0,
-                    Onlinepriceset: comboFormData.onlinePrice || 0,
-                    Short_description: comboFormData.shortDescription,
-                    Length: comboFormData.length || 0,
-                    Width: comboFormData.width || 0,
-                    Height: comboFormData.height || 0,
-                    Weight: comboFormData.weight || 0,
-                    Hscode: comboFormData.hsCode,
-                    Countryoforgin: comboFormData.countryOfOrigin,
-                    Productid: productId
+                    Wholesalepriceset: toServerNumber(comboFormData.wholesalePrice),
+                    Retailpriceset: toServerNumber(comboFormData.retailPrice),
+                    Onlinepriceset: toServerNumber(comboFormData.onlinePrice),
+                    Agecategory:
+                        product?.Age_category ||
+                        product?.age_category ||
+                        product?.Agecategory ||
+                        product?.agecategory ||
+                        '',
+                    Short_description: comboFormData.shortDescription
                 },
                 tableData: comboFormData.marketPlaces.map(mp => ({
                     Marketplace1: mp.name,
                     Status: mp.selected,
                     Link: mp.link
                 })),
-                tableData1: comboFormData.items.map(item => ({
-                    variantid: item.id,
-                    Qty: item.qty
-                }))
+                tableData1: comboFormData.items.map(item => {
+                    const rawName = String(item.itemName || item.name || '').replace(/\s/g, '');
+                    const setRowId = item.setItemId != null && item.setItemId !== '' ? Number(item.setItemId) : 0;
+                    return {
+                        id: Number.isFinite(setRowId) && setRowId > 0 ? setRowId : 0,
+                        variantid: item.id == null ? '' : String(item.id),
+                        Itemname: rawName,
+                        Qty: toServerNumber(item.qty)
+                    };
+                })
             };
+
+            const editing = isEditingSet && comboFormData.setId != null;
+            if (editing) {
+                payload.formData.id = String(comboFormData.setId);
+                payload.formData.status = comboFormData.setStatus || 'Active';
+                payload.formData.Workstatus = Number(comboFormData.workStatus ?? 0);
+            }
 
             const formDataToSend = new FormData();
             formDataToSend.append('jsonData', JSON.stringify(payload));
@@ -1814,25 +2281,32 @@ const ProductDetails = () => {
                 formDataToSend.append(`video_${index}`, file);
             });
 
-            const res = await fetch(`${API_URL}/api/product/saveproductcombo`, {
+            const endpoint = editing
+                ? `${API_URL}/api/product/sets/editsetitems`
+                : `${API_URL}/api/product/sets/saveproductset`;
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 body: formDataToSend
             });
 
-            const result = await res.json();
-            if (result.Success || result.success || result.message?.includes('successfully')) {
-                Swal.fire('Success', result.message || 'Combo Set Created Successfully', 'success');
+            const result = await res.json().catch(() => ({}));
+            const okMsg = result.message && String(result.message).toLowerCase().includes('success');
+            if (res.ok && (result.success === true || okMsg)) {
+                Swal.fire('Success', result.message || (editing ? 'Updated successfully' : 'Sets added successfully'), 'success');
                 setShowAddSetModal(false);
+                setIsEditingSet(false);
                 setComboFormData({
                     setId: null, setName: '', modelNo: '', batchNo: '', ean: '', description: '', shortDescription: '',
                     wholesalePrice: '', retailPrice: '', onlinePrice: '',
                     length: 0, width: 0, height: 0, weight: 0, hsCode: '', countryOfOrigin: '',
                     marketPlaces: comboFormData.marketPlaces.map(mp => ({ ...mp, selected: false, link: '' })),
-                    items: [], media: [], imageFiles: [], videoFiles: []
+                    items: [], media: [], imageFiles: [], videoFiles: [],
+                    setStatus: 'Active', workStatus: 0
                 });
                 setComboTab(0);
+                await fetchProductSets(productId);
             } else {
-                Swal.fire('Error', result.Message || result.message || 'Failed to create set', 'error');
+                Swal.fire('Error', result.Message || result.message || (editing ? 'Failed to update set' : 'Failed to create set'), 'error');
             }
         } catch (error) {
             console.error(error);
@@ -2864,7 +3338,9 @@ const ProductDetails = () => {
                                                     items: initialItems,
                                                     media: [],
                                                     imageFiles: [],
-                                                    videoFiles: []
+                                                    videoFiles: [],
+                                                    setStatus: 'Active',
+                                                    workStatus: 0
                                                 });
                                                 
                                                 setShowAddSetModal(true);
@@ -2886,62 +3362,67 @@ const ProductDetails = () => {
 
                                     {isMobile ? (
                                         <Stack spacing={2}>
-                                            {sets.filter(s =>
-                                                Object.values(s).some(val =>
-                                                    val.toString().toLowerCase().includes(searchTerm.toLowerCase())
-                                                )
-                                            ).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => (
+                                            {filterSetsList(sets).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => {
+                                                const st = getSetWorkStatusChip(s.workstatus);
+                                                return (
                                                 <Paper key={s.id} sx={{ p: 2, borderRadius: '20px', border: '1px solid #f1f5f9' }}>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                                         <Box>
                                                             <Typography variant="subtitle1" fontWeight={800} color="#1e293b">{s.name}</Typography>
-                                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mt: 0.5 }}>{s.items}</Typography>
+                                                            <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mt: 0.5, wordBreak: 'break-word', overflowWrap: 'anywhere', pr: 1 }}>{s.items}</Typography>
                                                         </Box>
-                                                        <Chip label={s.discount} size="small" sx={{ bgcolor: '#dcfce7', color: '#166534', fontWeight: 800, borderRadius: '6px' }} />
+                                                        <Chip label={st.label} size="small" sx={{ ...st.sx, borderRadius: '6px' }} />
                                                     </Box>
                                                     <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                                                        <Button size="small" variant="text" color="primary" sx={{ fontWeight: 800, textTransform: 'none' }} onClick={() => handleOpenViewSet(s)}>View Set</Button>
+                                                        <Button size="small" variant="text" color="primary" sx={{ fontWeight: 800, textTransform: 'none' }} onClick={() => void handleOpenViewSet(s)}>View Set</Button>
                                                     </Box>
                                                 </Paper>
-                                            ))}
+                                                );
+                                            })}
                                         </Stack>
                                     ) : (
                                         <TableContainer sx={{ borderRadius: '16px', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
-                                            <Table>
+                                            <Table size="small" sx={{ tableLayout: 'fixed', width: '100%' }}>
                                                 <TableHead sx={{ bgcolor: '#f8fafc' }}>
                                                     <TableRow>
-                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase' }}>Set Name</TableCell>
-                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase' }}>Included Items</TableCell>
-                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase' }}>Discount</TableCell>
-                                                        <TableCell align="center" sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase' }}>Action</TableCell>
+                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', width: '18%', whiteSpace: 'nowrap' }}>Set Name</TableCell>
+                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', width: '48%' }}>Included Items</TableCell>
+                                                        <TableCell sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', width: '14%', whiteSpace: 'nowrap' }}>Status</TableCell>
+                                                        <TableCell align="center" sx={{ fontWeight: 800, color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', width: '20%', whiteSpace: 'nowrap' }}>Action</TableCell>
                                                     </TableRow>
                                                 </TableHead>
                                                 <TableBody>
-                                                    {sets.filter(s =>
-                                                        Object.values(s).some(val =>
-                                                            val.toString().toLowerCase().includes(searchTerm.toLowerCase())
-                                                        )
-                                                    ).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => (
+                                                    {filterSetsList(sets).slice(setsPage * setsRowsPerPage, (setsPage + 1) * setsRowsPerPage).map((s) => {
+                                                        const st = getSetWorkStatusChip(s.workstatus);
+                                                        return (
                                                         <TableRow key={s.id} hover sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
-                                                            <TableCell sx={{ fontWeight: 800, color: '#1e293b' }}>{s.name}</TableCell>
-                                                            <TableCell sx={{ color: '#475569' }}>{s.items}</TableCell>
-                                                            <TableCell><Chip label={s.discount} size="small" sx={{ bgcolor: '#ecfdf5', color: '#065f46', fontWeight: 800, borderRadius: '6px' }} /></TableCell>
-                                                            <TableCell align="center">
-                                                                <Button size="small" sx={{ fontWeight: 800, textTransform: 'none', borderRadius: '8px' }} onClick={() => handleOpenViewSet(s)}>View Set</Button>
+                                                            <TableCell sx={{ fontWeight: 800, color: '#1e293b', verticalAlign: 'top', wordBreak: 'break-word' }}>{s.name}</TableCell>
+                                                            <TableCell
+                                                                sx={{
+                                                                    color: '#475569',
+                                                                    verticalAlign: 'top',
+                                                                    whiteSpace: 'normal',
+                                                                    wordBreak: 'break-word',
+                                                                    overflowWrap: 'anywhere',
+                                                                    maxWidth: 0
+                                                                }}
+                                                            >
+                                                                {s.items}
+                                                            </TableCell>
+                                                            <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}><Chip label={st.label} size="small" sx={{ ...st.sx, borderRadius: '6px' }} /></TableCell>
+                                                            <TableCell align="center" sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                                                                <Button size="small" sx={{ fontWeight: 800, textTransform: 'none', borderRadius: '8px', minWidth: 'auto' }} onClick={() => void handleOpenViewSet(s)}>View Set</Button>
                                                             </TableCell>
                                                         </TableRow>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </TableBody>
                                             </Table>
                                         </TableContainer>
                                     )}
 
                                     <DataTableFooter
-                                        totalItems={sets.filter(s =>
-                                            Object.values(s).some(val =>
-                                                val.toString().toLowerCase().includes(searchTerm.toLowerCase())
-                                            )
-                                        ).length}
+                                        totalItems={filterSetsList(sets).length}
                                         itemsPerPage={setsRowsPerPage}
                                         currentPage={setsPage + 1}
                                         onPageChange={(e, value) => setSetsPage(value - 1)}
@@ -2961,11 +3442,13 @@ const ProductDetails = () => {
                                     onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowViewSetModal(false) } }}
                                     maxWidth="md"
                                     fullWidth
+                                    disableEnforceFocus
+                                    disableAutoFocus
                                     PaperProps={{ sx: { borderRadius: '16px', overflow: 'hidden', boxShadow: '0 24px 80px rgba(2,6,23,0.35)' } }}
                                 >
                                     <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#2C3E50', color: 'white' }}>
                                         <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '10px', letterSpacing: '0.2px' }}>
-                                            <InventoryIcon /> {selectedSetForView.name || 'Set'}
+                                            <InventoryIcon /> {selectedSetForView.name || selectedSetForView.setName || 'Set'}
                                         </h3>
                                         <IconButton onClick={() => setShowViewSetModal(false)} sx={{ color: 'white' }}><CloseIcon /></IconButton>
                                     </div>
@@ -2990,25 +3473,35 @@ const ProductDetails = () => {
                                                 '& .Mui-selected': { bgcolor: '#2C3E50', color: '#fff !important', borderColor: '#2C3E50' }
                                             }}
                                         >
-                                            <Tab label="Combo Details" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
+                                            <Tab label="Set Details" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
                                             <Tab label="Photos & Videos" icon={<PhotoLibraryIcon fontSize="small" />} iconPosition="start" />
                                             <Tab label="Pricing" icon={<AttachMoneyIcon fontSize="small" />} iconPosition="start" />
-                                            <Tab label="Dimensions" icon={<CategoryIcon fontSize="small" />} iconPosition="start" />
                                         </Tabs>
                                     </Box>
-                                    <DialogContent dividers sx={{ minHeight: 360, bgcolor: '#ffffff' }}>
+                                    <DialogContent dividers sx={{ minHeight: 360, bgcolor: '#ffffff', position: 'relative' }}>
+                                        {viewSetDetailLoading && (
+                                            <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.7)', zIndex: 2 }}>
+                                                <CircularProgress size={40} sx={{ color: '#2C3E50' }} />
+                                            </Box>
+                                        )}
                                         {viewSetTab === 0 && (
                                             <Stack spacing={2}>
                                                 <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0' }}>
                                                     <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mb: 1 }}>Summary</Typography>
                                                     <Grid container spacing={2}>
                                                         <Grid item xs={12} md={6}>
-                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Combo Name</Typography>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Set Name</Typography>
                                                             <Typography variant="body2" sx={{ fontWeight: 700 }}>{selectedSetForView.name || selectedSetForView.setName || '—'}</Typography>
                                                         </Grid>
                                                         <Grid item xs={12} md={6}>
-                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Discount</Typography>
-                                                            <Box sx={{ mt: 0.5 }}><Chip label={selectedSetForView.discount || '—'} size="small" /></Box>
+                                                            <Typography variant="caption" sx={{ color: '#64748b' }}>Status</Typography>
+                                                            <Box sx={{ mt: 0.5 }}>
+                                                                <Chip
+                                                                    label={getSetWorkStatusChip(selectedSetForView.workstatus).label}
+                                                                    size="small"
+                                                                    sx={{ ...getSetWorkStatusChip(selectedSetForView.workstatus).sx, borderRadius: '6px' }}
+                                                                />
+                                                            </Box>
                                                         </Grid>
                                                     </Grid>
                                                 </Paper>
@@ -3076,7 +3569,9 @@ const ProductDetails = () => {
                                                     ))}
                                                 </Grid>
                                                 <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Videos</Typography>
-                                                <Typography variant="body2">{(selectedSetForView.videoFiles || []).length} video(s)</Typography>
+                                                <Typography variant="body2">
+                                                    {Array.isArray(selectedSetForView.videoFiles) ? selectedSetForView.videoFiles.length : 0} video(s)
+                                                </Typography>
                                             </Box>
                                         )}
 
@@ -3096,38 +3591,17 @@ const ProductDetails = () => {
                                                 </Grid>
                                             </Grid>
                                         )}
-
-                                        {viewSetTab === 3 && (
-                                            <Grid container spacing={2}>
-                                                <Grid item xs={12} md={6}>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Length</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.length ?? '—'}</Typography>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Width</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.width ?? '—'}</Typography>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>HS Code</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.hsCode ?? '—'}</Typography>
-                                                </Grid>
-                                                <Grid item xs={12} md={6}>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>Height</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.height ?? '—'}</Typography>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Weight</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.weight ?? '—'}</Typography>
-                                                    <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a', mt: 2 }}>Country of Origin</Typography>
-                                                    <Typography variant="body2">{selectedSetForView.countryOfOrigin ?? '—'}</Typography>
-                                                </Grid>
-                                            </Grid>
-                                        )}
                                     </DialogContent>
                                     <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
                                         <Button
-                                            onClick={() => handleDeleteSet(selectedSetForView.id ?? selectedSetForView.Id)}
+                                            onClick={() => void handleDeleteSetClick()}
                                             sx={{ color: '#dc2626', fontWeight: 700 }}
                                         >
                                             Delete
                                         </Button>
                                         <Button
                                             variant="contained"
-                                            onClick={handleEditFromViewSet}
+                                            onClick={() => void handleEditFromViewSetClick()}
                                             startIcon={<EditIcon />}
                                             sx={{ bgcolor: '#2C3E50', '&:hover': { bgcolor: '#243746' } }}
                                         >
@@ -5625,6 +6099,7 @@ const ProductDetails = () => {
                                 }
                             }}
                         >
+                            <button type="button" id="btn_setproductsave" hidden tabIndex={-1} aria-hidden onClick={() => void handleSaveSet()} />
                             <div className="add-set-modal-header" style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#2C3E50', color: 'white', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.08)' }}>
                                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', letterSpacing: '0.2px' }}>
                                     <InventoryIcon /> {isEditingSet ? 'Edit Combo Set' : 'Create Combo Set'}
@@ -5654,7 +6129,6 @@ const ProductDetails = () => {
                                     <Tab label="Combo Details" icon={<InventoryIcon fontSize="small" />} iconPosition="start" />
                                     <Tab label="Photos & Videos" icon={<PhotoLibraryIcon fontSize="small" />} iconPosition="start" />
                                     <Tab label="Pricing" icon={<AttachMoneyIcon fontSize="small" />} iconPosition="start" />
-                                    <Tab label="Dimensions" icon={<CategoryIcon fontSize="small" />} iconPosition="start" />
                                 </Tabs>
                             </Box>
 
@@ -5956,67 +6430,6 @@ const ProductDetails = () => {
                                         </Box>
                                     </Stack>
                                 )}
-
-                                {comboTab === 3 && (
-                                    <Grid container spacing={4} sx={{ p: 2 }}>
-                                        <Grid item xs={12} md={6}>
-                                            <Stack spacing={3}>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Length:</label>
-                                                    <TextField
-                                                        fullWidth size="small" type="number"
-                                                        value={comboFormData.length}
-                                                        onChange={e => setComboFormData({ ...comboFormData, length: e.target.value })}
-                                                    />
-                                                </Box>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Width:</label>
-                                                    <TextField
-                                                        fullWidth size="small" type="number"
-                                                        value={comboFormData.width}
-                                                        onChange={e => setComboFormData({ ...comboFormData, width: e.target.value })}
-                                                    />
-                                                </Box>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Hs Code:</label>
-                                                    <TextField
-                                                        fullWidth size="small"
-                                                        value={comboFormData.hsCode}
-                                                        onChange={e => setComboFormData({ ...comboFormData, hsCode: e.target.value })}
-                                                    />
-                                                </Box>
-                                            </Stack>
-                                        </Grid>
-                                        <Grid item xs={12} md={6}>
-                                            <Stack spacing={3}>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Height:</label>
-                                                    <TextField
-                                                        fullWidth size="small" type="number"
-                                                        value={comboFormData.height}
-                                                        onChange={e => setComboFormData({ ...comboFormData, height: e.target.value })}
-                                                    />
-                                                </Box>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Weight:</label>
-                                                    <TextField
-                                                        fullWidth size="small" type="number"
-                                                        value={comboFormData.weight}
-                                                        onChange={e => setComboFormData({ ...comboFormData, weight: e.target.value })}
-                                                    />
-                                                </Box>
-                                                <Box>
-                                                    <label style={{ fontWeight: 600, display: 'block', marginBottom: '4px' }}>Country of orgin:</label>
-                                                    <TextField
-                                                        fullWidth size="small"
-                                                        value={comboFormData.countryOfOrigin}
-                                                        onChange={e => setComboFormData({ ...comboFormData, countryOfOrigin: e.target.value })}
-                                                    />
-                                                </Box>
-                                            </Stack>
-                                        </Grid>
-                                    </Grid>
-                                )}
                             </DialogContent>
                             <DialogActions sx={{ p: 2, bgcolor: '#f8fafc' }}>
                                 <Button
@@ -6027,7 +6440,9 @@ const ProductDetails = () => {
                                     Cancel
                                 </Button>
                                 <Button
-                                    onClick={handleSaveSet}
+                                    id="btn_savecomboset"
+                                    type="button"
+                                    onClick={() => document.getElementById('btn_setproductsave')?.click()}
                                     variant="contained"
                                     disabled={formLoading}
                                     startIcon={formLoading ? <CircularProgress size={20} color="inherit" /> : <CheckCircleIcon />}

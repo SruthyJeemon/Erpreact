@@ -1,3 +1,4 @@
+using Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Data.SqlClient;
@@ -234,6 +235,11 @@ namespace Api.Controllers
                 }).Select(group =>
                 {
                     var first = group.First();
+                    string PickFirstNonEmpty(Func<Variants, string> sel)
+                        => group.Select(sel).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "";
+                    object PickFirstNonNull(Func<Variants, object> sel)
+                        => group.Select(sel).FirstOrDefault(o => o != null && o != DBNull.Value) ?? 0;
+
                     // Merge allvalues from all rows in this group
                     var allvals = string.Join(", ", group.Select(v => v.allvalues)
                                         .Where(s => !string.IsNullOrEmpty(s))
@@ -243,6 +249,22 @@ namespace Api.Controllers
                     
                     first.allvalues = allvals;
                     first.VariantsAndValues = allvals; 
+
+                    // Prefer non-empty detail fields from any merged row (prevents N/A in view modal)
+                    first.Short_description = PickFirstNonEmpty(v => v.Short_description);
+                    first.Description = PickFirstNonEmpty(v => v.Description);
+                    first.Hscode = PickFirstNonEmpty(v => v.Hscode);
+                    first.Country_orgin = PickFirstNonEmpty(v => v.Country_orgin);
+                    first.Standarduom = PickFirstNonEmpty(v => v.Standarduom);
+                    first.Salesuom = PickFirstNonEmpty(v => v.Salesuom);
+                    first.Purchaseuom = PickFirstNonEmpty(v => v.Purchaseuom);
+                    first.Defaultlocation = PickFirstNonEmpty(v => v.Defaultlocation);
+                    first.Remarks = PickFirstNonEmpty(v => v.Remarks);
+                    first.Agecategory = PickFirstNonEmpty(v => v.Agecategory);
+                    first.Length = PickFirstNonNull(v => v.Length);
+                    first.Width = PickFirstNonNull(v => v.Width);
+                    first.Height = PickFirstNonNull(v => v.Height);
+                    first.Weight = PickFirstNonNull(v => v.Weight);
                     
                     // Approval Statuses (Text based)
                     first.managerStatus = first.Managerapprovestatus;
@@ -658,6 +680,1837 @@ namespace Api.Controllers
             }
 
             return BadRequest(new { success = false, message = "Invalid data" });
+        }
+
+        /// <summary>Legacy product SET (Tbl_Productset / Sp_productset), not combo.</summary>
+        /// <remarks>Route must be under <c>sets/</c> so POST does not collide with minimal API <c>MapPut("/api/product/{id}")</c>.</remarks>
+        [HttpPost("sets/saveproductset")]
+        [Consumes("multipart/form-data")]
+        public IActionResult Saveproductset([FromForm] string jsonData)
+        {
+            string message = "";
+            var sets = new List<ProductSetListDto>();
+            int setid = 0;
+            string userid = "";
+            string productid = "";
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonData))
+                    return BadRequest(new { message = "", List1 = sets, success = false });
+
+                var data = JsonConvert.DeserializeObject<Setnew>(jsonData, new JsonSerializerSettings
+                {
+                    MissingMemberHandling = MissingMemberHandling.Ignore,
+                    NullValueHandling = NullValueHandling.Ignore
+                });
+
+                if (data?.formData == null || data.tableData == null || data.tableData1 == null)
+                    return BadRequest(new { message = "Invalid data", List1 = sets, success = false });
+
+                userid = data.formData.Userid ?? "ADMIN";
+                productid = data.formData.Productid ?? "";
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    using (var cmd2 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd2.CommandType = CommandType.StoredProcedure;
+                        cmd2.Parameters.AddWithValue("@Id", "");
+                        cmd2.Parameters.AddWithValue("@Userid", userid);
+                        cmd2.Parameters.AddWithValue("@Productid", productid);
+                        cmd2.Parameters.AddWithValue("@Setname", data.formData.Setname ?? "");
+                        cmd2.Parameters.AddWithValue("@Numberofpieces", data.formData.Numberofpieces ?? "");
+                        cmd2.Parameters.AddWithValue("@Modelno", data.formData.Modelno ?? "");
+                        cmd2.Parameters.AddWithValue("@Batchno", data.formData.Batchno ?? "");
+                        cmd2.Parameters.AddWithValue("@EANBarcodeno", data.formData.EANBarcodeno ?? "");
+                        cmd2.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd2.Parameters.AddWithValue("@Status", "Active");
+                        cmd2.Parameters.AddWithValue("@Workstatus", 0);
+                        cmd2.Parameters.AddWithValue("@Description", data.formData.Description ?? "");
+                        cmd2.Parameters.AddWithValue("@Wholesalepriceset", data.formData.Wholesalepriceset);
+                        cmd2.Parameters.AddWithValue("@Retailpriceset", data.formData.Retailpriceset);
+                        cmd2.Parameters.AddWithValue("@Onlinepriceset", data.formData.Onlinepriceset);
+                        cmd2.Parameters.AddWithValue("@Agecategory", data.formData.Agecategory ?? "");
+                        cmd2.Parameters.AddWithValue("@Short_description", data.formData.Short_description ?? "");
+                        cmd2.Parameters.AddWithValue("@Query", 1);
+                        var outputIdParam = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                        cmd2.Parameters.Add(outputIdParam);
+                        cmd2.ExecuteNonQuery();
+
+                        if (outputIdParam.Value != null && outputIdParam.Value != DBNull.Value)
+                            setid = Convert.ToInt32(outputIdParam.Value);
+                    }
+
+                    message = "Sets added successfully";
+
+                    foreach (var row in data.tableData)
+                    {
+                        using (var cmd = new SqlCommand("Sp_Productsetmarketplaceadd", con))
+                        {
+                            cmd.CommandType = CommandType.StoredProcedure;
+                            cmd.Parameters.AddWithValue("@Id", "");
+                            cmd.Parameters.AddWithValue("@Userid", userid);
+                            cmd.Parameters.AddWithValue("@Productid", productid);
+                            cmd.Parameters.AddWithValue("@Productsetid", setid);
+                            cmd.Parameters.AddWithValue("@Marketplacename", row.Marketplace1 ?? "");
+                            cmd.Parameters.AddWithValue("@Visibility", row.Status ? 1 : 0);
+                            cmd.Parameters.AddWithValue("@Isdelete", 0);
+                            cmd.Parameters.AddWithValue("@Status", "Active");
+                            cmd.Parameters.AddWithValue("@Link", row.Link ?? "");
+                            cmd.Parameters.AddWithValue("@Query", 1);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+
+                    foreach (var row in data.tableData1)
+                    {
+                        decimal qtyVal = ParseSetItemQty(row.Qty);
+                        using (var cmd = new SqlCommand("Sp_setitems", con))
+                        {
+                            cmd.CommandType = CommandType.StoredProcedure;
+                            cmd.Parameters.AddWithValue("@Id", "");
+                            cmd.Parameters.AddWithValue("@Userid", userid);
+                            cmd.Parameters.AddWithValue("@Productid", productid);
+                            cmd.Parameters.AddWithValue("@Productsetid", setid);
+                            cmd.Parameters.AddWithValue("@Productvariantsid", row.variantid ?? "");
+                            cmd.Parameters.AddWithValue("@Itemname", row.Itemname ?? "");
+                            cmd.Parameters.AddWithValue("@Qty", qtyVal);
+                            cmd.Parameters.AddWithValue("@Isdelete", 0);
+                            cmd.Parameters.AddWithValue("@Status", "Active");
+                            cmd.Parameters.AddWithValue("@Workstatus", 0);
+                            cmd.Parameters.AddWithValue("@Query", 1);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+
+                    using (var sqlcommand5 = new SqlCommand("Sp_Productvariantssetlog", con))
+                    {
+                        sqlcommand5.CommandType = CommandType.StoredProcedure;
+                        sqlcommand5.Parameters.AddWithValue("@Productid", productid);
+                        sqlcommand5.Parameters.AddWithValue("@Userid", userid);
+                        sqlcommand5.Parameters.AddWithValue("@Productvariantsid", 0);
+                        sqlcommand5.Parameters.AddWithValue("@Productsetid", setid);
+                        sqlcommand5.Parameters.AddWithValue("@Productcomboid", DBNull.Value);
+                        sqlcommand5.Parameters.AddWithValue("@Actiontype", (data.formData.Setname ?? "") + "-Add");
+                        sqlcommand5.Parameters.AddWithValue("@Date", DateTime.Now.ToString("MMM d yyyy h:mmtt"));
+                        sqlcommand5.Parameters.AddWithValue("@Query", 1);
+                        sqlcommand5.ExecuteNonQuery();
+                    }
+
+                    var galleryImages = Request.Form["galleryimages[]"];
+                    var galleryNames = Request.Form["gallerynames[]"];
+                    if (galleryImages.Count > 0 && galleryNames.Count > 0)
+                    {
+                        if (galleryImages.Count != galleryNames.Count)
+                            throw new InvalidOperationException("Number of images and names do not match.");
+
+                        for (int i = 0; i < galleryImages.Count; i++)
+                        {
+                            var imageBase64 = galleryImages[i];
+                            var name1 = galleryNames[i];
+                            if (string.IsNullOrWhiteSpace(imageBase64)) continue;
+
+                            string b64 = imageBase64.Contains(",") ? imageBase64.Split(',')[1] : imageBase64;
+                            byte[] imageBytes = Convert.FromBase64String(b64);
+
+                            string correctedFileName = CorrectImageFileName1(name1);
+                            string baseName = Path.GetFileNameWithoutExtension(correctedFileName);
+                            string extension = Path.GetExtension(correctedFileName);
+                            string newFileName = "";
+                            string dbsavedpath = "/Content/images/" + productid + "/Thumb/";
+
+                            int newgalleryId = 0;
+                            using (var cmd1 = new SqlCommand("Gallery", con))
+                            {
+                                cmd1.CommandType = CommandType.StoredProcedure;
+                                cmd1.Parameters.AddWithValue("@Userid", data.formData.Userid ?? (object)DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@Product_id", string.IsNullOrEmpty(productid) ? DBNull.Value : productid);
+                                cmd1.Parameters.AddWithValue("@Productvariants_id", "");
+                                cmd1.Parameters.AddWithValue("@Productset_id", setid);
+                                cmd1.Parameters.AddWithValue("@Gallery_file", DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@File_id", 3);
+                                cmd1.Parameters.AddWithValue("@Productcombo_id", DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@Query", 1);
+                                var outputIdParam1 = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                                cmd1.Parameters.Add(outputIdParam1);
+                                cmd1.ExecuteNonQuery();
+                                newgalleryId = (int)(outputIdParam1.Value ?? 0);
+                            }
+
+                            newFileName = $"{baseName}{newgalleryId}{extension}";
+                            using (var cmd1 = new SqlCommand("Gallery", con))
+                            {
+                                cmd1.CommandType = CommandType.StoredProcedure;
+                                cmd1.Parameters.AddWithValue("@Gallery_file", dbsavedpath + newFileName);
+                                cmd1.Parameters.AddWithValue("@File_id", 3);
+                                cmd1.Parameters.AddWithValue("@id", newgalleryId);
+                                cmd1.Parameters.AddWithValue("@Query", 3);
+                                cmd1.ExecuteNonQuery();
+                            }
+
+                            string uploadsOriginal = Path.Combine(_environment.ContentRootPath, "wwwroot", "Content", "images", productid);
+                            if (!Directory.Exists(uploadsOriginal)) Directory.CreateDirectory(uploadsOriginal);
+                            string uploadsPathOriginal = Path.Combine(uploadsOriginal, "Orginal");
+                            if (!Directory.Exists(uploadsPathOriginal)) Directory.CreateDirectory(uploadsPathOriginal);
+                            var filePath = Path.Combine(uploadsPathOriginal, newFileName);
+                            System.IO.File.WriteAllBytes(filePath, imageBytes);
+
+                            var uploadsPathresize = Path.Combine(uploadsOriginal, "Resize");
+                            if (!Directory.Exists(uploadsPathresize)) Directory.CreateDirectory(uploadsPathresize);
+                            var filePathResize = Path.Combine(uploadsPathresize, newFileName);
+                            using (Bitmap imageC = new Bitmap(new MemoryStream(imageBytes)))
+                            {
+                                AdjustImageOrientation(imageC);
+                                int originalWidth = imageC.Width;
+                                int originalHeight = imageC.Height;
+                                int newWidth, newHeight;
+                                if (originalWidth > 1200 || originalHeight > 1200)
+                                {
+                                    if (originalWidth > originalHeight)
+                                    {
+                                        newWidth = 1200;
+                                        newHeight = (int)(originalHeight * (1200.0 / originalWidth));
+                                    }
+                                    else
+                                    {
+                                        newHeight = 1200;
+                                        newWidth = (int)(originalWidth * (1200.0 / originalHeight));
+                                    }
+                                    newWidth = Math.Min(newWidth, originalWidth);
+                                    newHeight = Math.Min(newHeight, originalHeight);
+                                }
+                                else
+                                {
+                                    newWidth = originalWidth;
+                                    newHeight = originalHeight;
+                                }
+
+                                using (var thumbnail = new Bitmap(newWidth, newHeight, PixelFormat.Format24bppRgb))
+                                using (var graphic = Graphics.FromImage(thumbnail))
+                                {
+                                    graphic.SmoothingMode = SmoothingMode.AntiAlias;
+                                    graphic.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                    graphic.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                    graphic.CompositingQuality = CompositingQuality.HighSpeed;
+                                    graphic.CompositingMode = CompositingMode.SourceCopy;
+                                    graphic.Clear(Color.White);
+                                    graphic.DrawImage(imageC, 0, 0, newWidth, newHeight);
+                                    thumbnail.Save(filePathResize, ImageFormat.Jpeg);
+                                }
+                            }
+
+                            var uploadsPaththumb = Path.Combine(uploadsOriginal, "Thumb");
+                            if (!Directory.Exists(uploadsPaththumb)) Directory.CreateDirectory(uploadsPaththumb);
+                            var thumbnailFilePath = Path.Combine(uploadsPaththumb, newFileName);
+                            using (var originalImage = new Bitmap(new MemoryStream(imageBytes)))
+                            {
+                                AdjustImageOrientation(originalImage);
+                                int width = 50, height = 50;
+                                using (var thumbnail = new Bitmap(width, height, PixelFormat.Format24bppRgb))
+                                using (var graphic = Graphics.FromImage(thumbnail))
+                                {
+                                    graphic.SmoothingMode = SmoothingMode.AntiAlias;
+                                    graphic.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                    graphic.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                    graphic.CompositingQuality = CompositingQuality.HighSpeed;
+                                    graphic.CompositingMode = CompositingMode.SourceCopy;
+                                    graphic.Clear(Color.White);
+                                    graphic.DrawImage(originalImage, 0, 0, width, height);
+                                    thumbnail.Save(thumbnailFilePath, ImageFormat.Jpeg);
+                                }
+                            }
+                        }
+                    }
+
+                    foreach (var file in Request.Form.Files)
+                    {
+                        if (file == null || file.Length == 0) continue;
+                        if (string.Equals(file.Name, "jsonData", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        string correctedFileName = CorrectImageFileName1(file.FileName);
+                        string baseName = Path.GetFileNameWithoutExtension(correctedFileName);
+                        string extension = Path.GetExtension(correctedFileName);
+                        string dbsavedpath = "/Content/images/" + productid + "/Orginal/";
+                        int newgalleryId1 = 0;
+
+                        using (var cmd1 = new SqlCommand("Gallery", con))
+                        {
+                            cmd1.CommandType = CommandType.StoredProcedure;
+                            cmd1.Parameters.AddWithValue("@Userid", userid);
+                            cmd1.Parameters.AddWithValue("@Product_id", productid);
+                            cmd1.Parameters.AddWithValue("@Productvariants_id", "");
+                            cmd1.Parameters.AddWithValue("@Productset_id", setid);
+                            cmd1.Parameters.AddWithValue("@Gallery_file", "");
+                            cmd1.Parameters.AddWithValue("@File_id", 2);
+                            cmd1.Parameters.AddWithValue("@id", DBNull.Value);
+                            cmd1.Parameters.AddWithValue("@Productcombo_id", DBNull.Value);
+                            cmd1.Parameters.AddWithValue("@Query", 1);
+                            var outputIdParam1 = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                            cmd1.Parameters.Add(outputIdParam1);
+                            cmd1.ExecuteNonQuery();
+                            newgalleryId1 = (int)(outputIdParam1.Value ?? 0);
+                        }
+
+                        string newFileName1 = $"{baseName}{newgalleryId1}{extension}";
+                        using (var cmd1 = new SqlCommand("Gallery", con))
+                        {
+                            cmd1.CommandType = CommandType.StoredProcedure;
+                            cmd1.Parameters.AddWithValue("@Gallery_file", dbsavedpath + newFileName1);
+                            cmd1.Parameters.AddWithValue("@File_id", 2);
+                            cmd1.Parameters.AddWithValue("@id", newgalleryId1);
+                            cmd1.Parameters.AddWithValue("@Query", 3);
+                            cmd1.ExecuteNonQuery();
+                        }
+
+                        var uploadsPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "Content", "images", productid, "Orginal");
+                        if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
+                        var vpath = Path.Combine(uploadsPath, newFileName1);
+                        using (var fs = new FileStream(vpath, FileMode.Create))
+                            file.CopyTo(fs);
+                    }
+
+                    using (var cmd21 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd21.CommandType = CommandType.StoredProcedure;
+                        cmd21.Parameters.AddWithValue("@Id", "");
+                        cmd21.Parameters.AddWithValue("@Userid", "");
+                        cmd21.Parameters.AddWithValue("@Productid", productid);
+                        cmd21.Parameters.AddWithValue("@Setname", data.formData.Setname ?? "");
+                        cmd21.Parameters.AddWithValue("@Numberofpieces", data.formData.Numberofpieces ?? "");
+                        cmd21.Parameters.AddWithValue("@Query", 3);
+                        using (var da1 = new SqlDataAdapter(cmd21))
+                        {
+                            var dt1 = new DataTable();
+                            da1.Fill(dt1);
+                            foreach (DataRow row1 in dt1.Rows)
+                            {
+                                sets.Add(new ProductSetListDto
+                                {
+                                    id = Convert.ToInt32(row1["Id"]),
+                                    Userid = row1["Userid"]?.ToString() ?? "",
+                                    Productid = row1["Productid"]?.ToString() ?? "",
+                                    Productname = row1["Product_name"]?.ToString() ?? "",
+                                    Setname = row1["Setname"]?.ToString() ?? "",
+                                    Numberofpieces = row1["Numberofpieces"]?.ToString() ?? "",
+                                    Modelno = row1["Modelno"]?.ToString() ?? "",
+                                    Batchno = row1["Batchno"]?.ToString() ?? "",
+                                    EANBarcodeno = row1["EANBarcodeno"]?.ToString() ?? "",
+                                    Isdelete = row1["Isdelete"]?.ToString() ?? "",
+                                    Status = row1["Status"]?.ToString() ?? "",
+                                    Workstatus = row1["Workstatus"]?.ToString() ?? "",
+                                    Username = row1["Firstname"]?.ToString() ?? "",
+                                    Description = row1["Description"]?.ToString() ?? "",
+                                    Wholesalepriceset = row1["Wholesalepriceset"]?.ToString() ?? "",
+                                    Retailpriceset = row1["Retailpriceset"]?.ToString() ?? "",
+                                    Onlinepriceset = row1["Onlinepriceset"]?.ToString() ?? ""
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new { message, List1 = sets, success = true });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Saveproductset: " + ex);
+                return StatusCode(500, new { message = ex.Message, List1 = sets, success = false });
+            }
+        }
+
+        /// <summary>Legacy Editsetitems: update product set (Sp_productset Q5), marketplace, set items, append gallery/video, refresh list (Q3).</summary>
+        /// <remarks>Route must be under <c>sets/</c> so POST does not collide with minimal API <c>MapPut("/api/product/{id}")</c>.</remarks>
+        [HttpPost("sets/editsetitems")]
+        [Consumes("multipart/form-data")]
+        public IActionResult Editsetitems([FromForm] string jsonData)
+        {
+            string message = "";
+            var sets = new List<ProductSetListDto>();
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonData))
+                    return BadRequest(new { message = "", List1 = sets, success = false });
+
+                var data = JsonConvert.DeserializeObject<Setnew>(jsonData, new JsonSerializerSettings
+                {
+                    MissingMemberHandling = MissingMemberHandling.Ignore,
+                    NullValueHandling = NullValueHandling.Ignore
+                });
+
+                if (data?.formData == null || string.IsNullOrWhiteSpace(data.formData.id))
+                    return BadRequest(new { message = "Invalid data: formData.id required for edit", List1 = sets, success = false });
+
+                if (!int.TryParse(data.formData.id.Trim(), out int setIdInt) || setIdInt <= 0)
+                    return BadRequest(new { message = "Invalid set id", List1 = sets, success = false });
+
+                string userid = data.formData.Userid ?? "ADMIN";
+                string productid = data.formData.Productid ?? "";
+                string setStatus = string.IsNullOrWhiteSpace(data.formData.status) ? "Active" : data.formData.status;
+                int workStatus = data.formData.Workstatus;
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    using (var cmd2 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd2.CommandType = CommandType.StoredProcedure;
+                        cmd2.Parameters.AddWithValue("@Id", setIdInt);
+                        cmd2.Parameters.AddWithValue("@Userid", userid);
+                        cmd2.Parameters.AddWithValue("@Productid", productid);
+                        cmd2.Parameters.AddWithValue("@Setname", data.formData.Setname ?? "");
+                        cmd2.Parameters.AddWithValue("@Numberofpieces", data.formData.Numberofpieces ?? "");
+                        cmd2.Parameters.AddWithValue("@Modelno", data.formData.Modelno ?? "");
+                        cmd2.Parameters.AddWithValue("@Batchno", data.formData.Batchno ?? "");
+                        cmd2.Parameters.AddWithValue("@EANBarcodeno", data.formData.EANBarcodeno ?? "");
+                        cmd2.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd2.Parameters.AddWithValue("@Status", setStatus);
+                        cmd2.Parameters.AddWithValue("@Workstatus", workStatus);
+                        cmd2.Parameters.AddWithValue("@Description", data.formData.Description ?? "");
+                        cmd2.Parameters.AddWithValue("@Wholesalepriceset", data.formData.Wholesalepriceset);
+                        cmd2.Parameters.AddWithValue("@Retailpriceset", data.formData.Retailpriceset);
+                        cmd2.Parameters.AddWithValue("@Onlinepriceset", data.formData.Onlinepriceset);
+                        cmd2.Parameters.AddWithValue("@Agecategory", data.formData.Agecategory ?? "");
+                        cmd2.Parameters.AddWithValue("@Short_description", data.formData.Short_description ?? "");
+                        cmd2.Parameters.AddWithValue("@Query", 5);
+                        cmd2.ExecuteNonQuery();
+                    }
+
+                    using (var sqlcommand5 = new SqlCommand("Sp_Productvariantssetlog", con))
+                    {
+                        sqlcommand5.CommandType = CommandType.StoredProcedure;
+                        sqlcommand5.Parameters.AddWithValue("@Productid", productid);
+                        sqlcommand5.Parameters.AddWithValue("@Userid", userid);
+                        sqlcommand5.Parameters.AddWithValue("@Productvariantsid", 0);
+                        sqlcommand5.Parameters.AddWithValue("@Productsetid", setIdInt);
+                        sqlcommand5.Parameters.AddWithValue("@Productcomboid", DBNull.Value);
+                        sqlcommand5.Parameters.AddWithValue("@Actiontype", (data.formData.Setname ?? "") + "-Update");
+                        sqlcommand5.Parameters.AddWithValue("@Date", DateTime.Now.ToString("MMM d yyyy h:mmtt"));
+                        sqlcommand5.Parameters.AddWithValue("@Query", 1);
+                        sqlcommand5.ExecuteNonQuery();
+                    }
+
+                    bool hasMpRows = false;
+                    using (var cmd3 = new SqlCommand("Sp_Productsetmarketplaceadd", con))
+                    {
+                        cmd3.CommandType = CommandType.StoredProcedure;
+                        cmd3.Parameters.AddWithValue("@Id", 0);
+                        cmd3.Parameters.AddWithValue("@Userid", "");
+                        cmd3.Parameters.AddWithValue("@Productid", "");
+                        cmd3.Parameters.AddWithValue("@Productsetid", setIdInt);
+                        cmd3.Parameters.AddWithValue("@Marketplacename", "");
+                        cmd3.Parameters.AddWithValue("@Visibility", 0);
+                        cmd3.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd3.Parameters.AddWithValue("@Status", "");
+                        cmd3.Parameters.AddWithValue("@Link", "");
+                        cmd3.Parameters.AddWithValue("@Query", 3);
+                        using (var da12 = new SqlDataAdapter(cmd3))
+                        {
+                            var dt12 = new DataTable();
+                            da12.Fill(dt12);
+                            hasMpRows = dt12.Rows.Count > 0;
+                        }
+                    }
+
+                    foreach (var row in data.tableData ?? new List<MarketplaceData>())
+                    {
+                        if (hasMpRows)
+                        {
+                            using (var cmd = new SqlCommand("Sp_Productsetmarketplaceadd", con))
+                            {
+                                cmd.CommandType = CommandType.StoredProcedure;
+                                cmd.Parameters.AddWithValue("@Id", 0);
+                                cmd.Parameters.AddWithValue("@Userid", "");
+                                cmd.Parameters.AddWithValue("@Productid", "");
+                                cmd.Parameters.AddWithValue("@Productsetid", setIdInt);
+                                cmd.Parameters.AddWithValue("@Marketplacename", row.Marketplace1 ?? "");
+                                cmd.Parameters.AddWithValue("@Visibility", row.Status ? 1 : 0);
+                                cmd.Parameters.AddWithValue("@Isdelete", 0);
+                                cmd.Parameters.AddWithValue("@Status", "Active");
+                                cmd.Parameters.AddWithValue("@Link", row.Link ?? "");
+                                cmd.Parameters.AddWithValue("@Query", 4);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            using (var cmd1 = new SqlCommand("Sp_Productsetmarketplaceadd", con))
+                            {
+                                cmd1.CommandType = CommandType.StoredProcedure;
+                                cmd1.Parameters.AddWithValue("@Id", 0);
+                                cmd1.Parameters.AddWithValue("@Userid", userid);
+                                cmd1.Parameters.AddWithValue("@Productid", productid);
+                                cmd1.Parameters.AddWithValue("@Productsetid", setIdInt);
+                                cmd1.Parameters.AddWithValue("@Marketplacename", row.Marketplace1 ?? "");
+                                cmd1.Parameters.AddWithValue("@Visibility", row.Status ? 1 : 0);
+                                cmd1.Parameters.AddWithValue("@Isdelete", 0);
+                                cmd1.Parameters.AddWithValue("@Status", "Active");
+                                cmd1.Parameters.AddWithValue("@Link", row.Link ?? "");
+                                cmd1.Parameters.AddWithValue("@Query", 1);
+                                cmd1.ExecuteNonQuery();
+                            }
+                        }
+                    }
+
+                    foreach (var row in data.tableData1 ?? new List<ItemData>())
+                    {
+                        decimal qtyVal = ParseSetItemQty(row.Qty);
+                        if (row.id != 0)
+                        {
+                            using (var cmd = new SqlCommand("Sp_setitems", con))
+                            {
+                                cmd.CommandType = CommandType.StoredProcedure;
+                                cmd.Parameters.AddWithValue("@Id", row.id);
+                                cmd.Parameters.AddWithValue("@Userid", "");
+                                cmd.Parameters.AddWithValue("@Productid", "");
+                                cmd.Parameters.AddWithValue("@Productsetid", 0);
+                                cmd.Parameters.AddWithValue("@Productvariantsid", 0);
+                                cmd.Parameters.AddWithValue("@Itemname", row.Itemname ?? "");
+                                cmd.Parameters.AddWithValue("@Qty", (int)Math.Round(qtyVal, MidpointRounding.AwayFromZero));
+                                cmd.Parameters.AddWithValue("@Isdelete", 0);
+                                cmd.Parameters.AddWithValue("@Status", "Active");
+                                cmd.Parameters.AddWithValue("@Workstatus", "");
+                                cmd.Parameters.AddWithValue("@Query", 4);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            int.TryParse(row.variantid?.ToString(), out int variantId);
+                            using (var cmd = new SqlCommand("Sp_setitems", con))
+                            {
+                                cmd.CommandType = CommandType.StoredProcedure;
+                                cmd.Parameters.AddWithValue("@Id", 0);
+                                cmd.Parameters.AddWithValue("@Userid", userid);
+                                cmd.Parameters.AddWithValue("@Productid", productid);
+                                cmd.Parameters.AddWithValue("@Productsetid", setIdInt);
+                                cmd.Parameters.AddWithValue("@Productvariantsid", variantId);
+                                cmd.Parameters.AddWithValue("@Itemname", row.Itemname ?? "");
+                                cmd.Parameters.AddWithValue("@Qty", (int)Math.Round(qtyVal, MidpointRounding.AwayFromZero));
+                                cmd.Parameters.AddWithValue("@Isdelete", 0);
+                                cmd.Parameters.AddWithValue("@Status", "Active");
+                                cmd.Parameters.AddWithValue("@Workstatus", 0);
+                                cmd.Parameters.AddWithValue("@Query", 1);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                    }
+
+                    var galleryImages = Request.Form["galleryimages[]"];
+                    var galleryNames = Request.Form["gallerynames[]"];
+                    if (galleryImages.Count > 0 && galleryNames.Count > 0)
+                    {
+                        if (galleryImages.Count != galleryNames.Count)
+                            throw new InvalidOperationException("Number of images and names do not match.");
+
+                        for (int i = 0; i < galleryImages.Count; i++)
+                        {
+                            var imageBase64 = galleryImages[i];
+                            var name1 = galleryNames[i];
+                            if (string.IsNullOrWhiteSpace(imageBase64)) continue;
+
+                            string b64 = imageBase64.Contains(",") ? imageBase64.Split(',')[1] : imageBase64;
+                            byte[] imageBytes = Convert.FromBase64String(b64);
+
+                            string correctedFileName = CorrectImageFileName1(name1);
+                            string baseName = Path.GetFileNameWithoutExtension(correctedFileName);
+                            string extension = Path.GetExtension(correctedFileName);
+                            string newFileName = "";
+                            string dbsavedpath = "/Content/images/" + productid + "/Thumb/";
+
+                            int newgalleryId = 0;
+                            using (var cmd1 = new SqlCommand("Gallery", con))
+                            {
+                                cmd1.CommandType = CommandType.StoredProcedure;
+                                cmd1.Parameters.AddWithValue("@Userid", data.formData.Userid ?? (object)DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@Product_id", string.IsNullOrEmpty(productid) ? DBNull.Value : productid);
+                                cmd1.Parameters.AddWithValue("@Productvariants_id", "");
+                                cmd1.Parameters.AddWithValue("@Productset_id", setIdInt);
+                                cmd1.Parameters.AddWithValue("@Gallery_file", DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@File_id", 3);
+                                cmd1.Parameters.AddWithValue("@Productcombo_id", DBNull.Value);
+                                cmd1.Parameters.AddWithValue("@Query", 1);
+                                var outputIdParam1 = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                                cmd1.Parameters.Add(outputIdParam1);
+                                cmd1.ExecuteNonQuery();
+                                newgalleryId = (int)(outputIdParam1.Value ?? 0);
+                            }
+
+                            newFileName = $"{baseName}{newgalleryId}{extension}";
+                            using (var cmd1 = new SqlCommand("Gallery", con))
+                            {
+                                cmd1.CommandType = CommandType.StoredProcedure;
+                                cmd1.Parameters.AddWithValue("@Gallery_file", dbsavedpath + newFileName);
+                                cmd1.Parameters.AddWithValue("@File_id", 3);
+                                cmd1.Parameters.AddWithValue("@id", newgalleryId);
+                                cmd1.Parameters.AddWithValue("@Query", 3);
+                                cmd1.ExecuteNonQuery();
+                            }
+
+                            string uploadsOriginal = Path.Combine(_environment.ContentRootPath, "wwwroot", "Content", "images", productid);
+                            if (!Directory.Exists(uploadsOriginal)) Directory.CreateDirectory(uploadsOriginal);
+                            string uploadsPathOriginal = Path.Combine(uploadsOriginal, "Orginal");
+                            if (!Directory.Exists(uploadsPathOriginal)) Directory.CreateDirectory(uploadsPathOriginal);
+                            var filePath = Path.Combine(uploadsPathOriginal, newFileName);
+                            System.IO.File.WriteAllBytes(filePath, imageBytes);
+
+                            var uploadsPathresize = Path.Combine(uploadsOriginal, "Resize");
+                            if (!Directory.Exists(uploadsPathresize)) Directory.CreateDirectory(uploadsPathresize);
+                            var filePathResize = Path.Combine(uploadsPathresize, newFileName);
+                            using (Bitmap imageC = new Bitmap(new MemoryStream(imageBytes)))
+                            {
+                                AdjustImageOrientation(imageC);
+                                int originalWidth = imageC.Width;
+                                int originalHeight = imageC.Height;
+                                int newWidth, newHeight;
+                                if (originalWidth > 1200 || originalHeight > 1200)
+                                {
+                                    if (originalWidth > originalHeight)
+                                    {
+                                        newWidth = 1200;
+                                        newHeight = (int)(originalHeight * (1200.0 / originalWidth));
+                                    }
+                                    else
+                                    {
+                                        newHeight = 1200;
+                                        newWidth = (int)(originalWidth * (1200.0 / originalHeight));
+                                    }
+                                    newWidth = Math.Min(newWidth, originalWidth);
+                                    newHeight = Math.Min(newHeight, originalHeight);
+                                }
+                                else
+                                {
+                                    newWidth = originalWidth;
+                                    newHeight = originalHeight;
+                                }
+
+                                using (var thumbnail = new Bitmap(newWidth, newHeight, PixelFormat.Format24bppRgb))
+                                using (var graphic = Graphics.FromImage(thumbnail))
+                                {
+                                    graphic.SmoothingMode = SmoothingMode.AntiAlias;
+                                    graphic.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                    graphic.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                    graphic.CompositingQuality = CompositingQuality.HighSpeed;
+                                    graphic.CompositingMode = CompositingMode.SourceCopy;
+                                    graphic.Clear(Color.White);
+                                    graphic.DrawImage(imageC, 0, 0, newWidth, newHeight);
+                                    thumbnail.Save(filePathResize, ImageFormat.Jpeg);
+                                }
+                            }
+
+                            var uploadsPaththumb = Path.Combine(uploadsOriginal, "Thumb");
+                            if (!Directory.Exists(uploadsPaththumb)) Directory.CreateDirectory(uploadsPaththumb);
+                            var thumbnailFilePath = Path.Combine(uploadsPaththumb, newFileName);
+                            using (var originalImage = new Bitmap(new MemoryStream(imageBytes)))
+                            {
+                                AdjustImageOrientation(originalImage);
+                                int width = 50, height = 50;
+                                using (var thumbnail = new Bitmap(width, height, PixelFormat.Format24bppRgb))
+                                using (var graphic = Graphics.FromImage(thumbnail))
+                                {
+                                    graphic.SmoothingMode = SmoothingMode.AntiAlias;
+                                    graphic.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                    graphic.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                    graphic.CompositingQuality = CompositingQuality.HighSpeed;
+                                    graphic.CompositingMode = CompositingMode.SourceCopy;
+                                    graphic.Clear(Color.White);
+                                    graphic.DrawImage(originalImage, 0, 0, width, height);
+                                    thumbnail.Save(thumbnailFilePath, ImageFormat.Jpeg);
+                                }
+                            }
+                        }
+                    }
+
+                    foreach (var file in Request.Form.Files)
+                    {
+                        if (file == null || file.Length == 0) continue;
+                        if (string.Equals(file.Name, "jsonData", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        string correctedFileName = CorrectImageFileName1(file.FileName);
+                        string baseName = Path.GetFileNameWithoutExtension(correctedFileName);
+                        string extension = Path.GetExtension(correctedFileName);
+                        string dbsavedpath = "/Content/images/" + productid + "/Orginal/";
+                        int newgalleryId1 = 0;
+
+                        using (var cmd1 = new SqlCommand("Gallery", con))
+                        {
+                            cmd1.CommandType = CommandType.StoredProcedure;
+                            cmd1.Parameters.AddWithValue("@Userid", userid);
+                            cmd1.Parameters.AddWithValue("@Product_id", productid);
+                            cmd1.Parameters.AddWithValue("@Productvariants_id", "");
+                            cmd1.Parameters.AddWithValue("@Productset_id", setIdInt);
+                            cmd1.Parameters.AddWithValue("@Gallery_file", "");
+                            cmd1.Parameters.AddWithValue("@File_id", 2);
+                            cmd1.Parameters.AddWithValue("@id", DBNull.Value);
+                            cmd1.Parameters.AddWithValue("@Productcombo_id", DBNull.Value);
+                            cmd1.Parameters.AddWithValue("@Query", 1);
+                            var outputIdParam1 = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                            cmd1.Parameters.Add(outputIdParam1);
+                            cmd1.ExecuteNonQuery();
+                            newgalleryId1 = (int)(outputIdParam1.Value ?? 0);
+                        }
+
+                        string newFileName1 = $"{baseName}{newgalleryId1}{extension}";
+                        using (var cmd1 = new SqlCommand("Gallery", con))
+                        {
+                            cmd1.CommandType = CommandType.StoredProcedure;
+                            cmd1.Parameters.AddWithValue("@Gallery_file", dbsavedpath + newFileName1);
+                            cmd1.Parameters.AddWithValue("@File_id", 2);
+                            cmd1.Parameters.AddWithValue("@id", newgalleryId1);
+                            cmd1.Parameters.AddWithValue("@Query", 3);
+                            cmd1.ExecuteNonQuery();
+                        }
+
+                        var uploadsPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "Content", "images", productid, "Orginal");
+                        if (!Directory.Exists(uploadsPath)) Directory.CreateDirectory(uploadsPath);
+                        var vpath = Path.Combine(uploadsPath, newFileName1);
+                        using (var fs = new FileStream(vpath, FileMode.Create))
+                            file.CopyTo(fs);
+                    }
+
+                    using (var cmd21 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd21.CommandType = CommandType.StoredProcedure;
+                        cmd21.Parameters.AddWithValue("@Id", "");
+                        cmd21.Parameters.AddWithValue("@Userid", "");
+                        cmd21.Parameters.AddWithValue("@Productid", productid);
+                        cmd21.Parameters.AddWithValue("@Setname", data.formData.Setname ?? "");
+                        cmd21.Parameters.AddWithValue("@Numberofpieces", data.formData.Numberofpieces ?? "");
+                        cmd21.Parameters.AddWithValue("@Query", 3);
+                        using (var da1 = new SqlDataAdapter(cmd21))
+                        {
+                            var dt1 = new DataTable();
+                            da1.Fill(dt1);
+                            foreach (DataRow row1 in dt1.Rows)
+                            {
+                                sets.Add(new ProductSetListDto
+                                {
+                                    id = Convert.ToInt32(row1["Id"]),
+                                    Userid = row1["Userid"]?.ToString() ?? "",
+                                    Productid = row1["Productid"]?.ToString() ?? "",
+                                    Productname = row1["Product_name"]?.ToString() ?? "",
+                                    Setname = row1["Setname"]?.ToString() ?? "",
+                                    Numberofpieces = row1["Numberofpieces"]?.ToString() ?? "",
+                                    Modelno = row1["Modelno"]?.ToString() ?? "",
+                                    Batchno = row1["Batchno"]?.ToString() ?? "",
+                                    EANBarcodeno = row1["EANBarcodeno"]?.ToString() ?? "",
+                                    Isdelete = row1["Isdelete"]?.ToString() ?? "",
+                                    Status = row1["Status"]?.ToString() ?? "",
+                                    Workstatus = row1["Workstatus"]?.ToString() ?? "",
+                                    Username = row1["Firstname"]?.ToString() ?? "",
+                                    Description = row1["Description"]?.ToString() ?? "",
+                                    Wholesalepriceset = row1["Wholesalepriceset"]?.ToString() ?? "",
+                                    Retailpriceset = row1["Retailpriceset"]?.ToString() ?? "",
+                                    Onlinepriceset = row1["Onlinepriceset"]?.ToString() ?? ""
+                                });
+                            }
+                        }
+                    }
+
+                    message = "Updated successfully";
+                }
+
+                return Ok(new { message, List1 = sets, success = true });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Editsetitems: " + ex);
+                return StatusCode(500, new { message = ex.Message, List1 = sets, success = false });
+            }
+        }
+
+        private static decimal ParseSetItemQty(object qty)
+        {
+            if (qty == null) return 1m;
+            try
+            {
+                if (qty is decimal d) return d <= 0 ? 1m : d;
+                if (qty is int i) return i <= 0 ? 1m : i;
+                if (qty is long l) return l <= 0 ? 1m : l;
+                if (qty is double db) return (decimal)(db <= 0 ? 1 : db);
+                if (qty is Newtonsoft.Json.Linq.JValue jv && jv.Value != null)
+                {
+                    if (decimal.TryParse(jv.Value.ToString(), out var jd) && jd > 0) return jd;
+                }
+                if (decimal.TryParse(qty.ToString(), out var x) && x > 0) return x;
+            }
+            catch { /* ignore */ }
+            return 1m;
+        }
+
+        [HttpGet("productsets/{productId}")]
+        public IActionResult GetProductsets(string productId)
+        {
+            try
+            {
+                var list = new List<Dictionary<string, object>>();
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    var rows = new List<(int setId, Dictionary<string, object> dict)>();
+                    using (var cmd = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productid", productId ?? "");
+                        cmd.Parameters.AddWithValue("@Id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Isdelete", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Workstatus", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Query", 3);
+                        cmd.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                int sid = Convert.ToInt32(reader["Id"]);
+                                var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    dict[col] = val == DBNull.Value ? null : val;
+                                }
+                                rows.Add((sid, dict));
+                            }
+                        }
+                    }
+
+                    foreach (var (setId, dict) in rows)
+                    {
+                        dict["IncludedItemsSummary"] = GetSetItemsSummary(con, productId ?? "", setId);
+                        list.Add(dict);
+                    }
+                }
+
+                return Ok(new { List1 = list, success = true });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetProductsets: " + ex);
+                return StatusCode(500, new { message = ex.Message, List1 = new List<object>(), success = false });
+            }
+        }
+
+        private static string GetSetItemsSummary(SqlConnection con, string productId, int productSetId)
+        {
+            var parts = new List<string>();
+            using (var cmd = new SqlCommand("Sp_setitems", con))
+            {
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.Parameters.AddWithValue("@Userid", "");
+                cmd.Parameters.AddWithValue("@Productid", productId ?? "");
+                cmd.Parameters.AddWithValue("@Id", 0);
+                cmd.Parameters.AddWithValue("@Productsetid", productSetId);
+                cmd.Parameters.AddWithValue("@Productvariantsid", 0);
+                cmd.Parameters.AddWithValue("@Itemname", "");
+                cmd.Parameters.AddWithValue("@Qty", 0);
+                cmd.Parameters.AddWithValue("@Isdelete", 0);
+                cmd.Parameters.AddWithValue("@Status", "");
+                cmd.Parameters.AddWithValue("@Workstatus", "");
+                cmd.Parameters.AddWithValue("@Query", 2);
+                using (var r = cmd.ExecuteReader())
+                {
+                    while (r.Read())
+                    {
+                        string itemname = r["Itemname"]?.ToString() ?? "";
+                        string qty = r["Qty"]?.ToString() ?? "1";
+                        if (!string.IsNullOrWhiteSpace(itemname))
+                            parts.Add(itemname + " × " + qty);
+                    }
+                }
+            }
+            return parts.Count > 0 ? string.Join(", ", parts) : "—";
+        }
+
+        [HttpGet("productset/{setId:int}")]
+        public IActionResult GetProductsetDetail(int setId)
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    DataRow setRow = null;
+                    using (var cmd = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Id", setId);
+                        cmd.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Isdelete", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Workstatus", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Query", 13);
+                        cmd.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+
+                        using (var da = new SqlDataAdapter(cmd))
+                        {
+                            var dt = new DataTable();
+                            da.Fill(dt);
+                            if (dt.Rows.Count == 0)
+                                return NotFound(new { success = false, message = "Set not found" });
+                            setRow = dt.Rows[0];
+                        }
+                    }
+
+                    string productId = setRow["Productid"]?.ToString() ?? "";
+
+                    var items = new List<Dictionary<string, object>>();
+                    using (var cmd = new SqlCommand("Sp_setitems", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", "");
+                        cmd.Parameters.AddWithValue("@Productid", productId);
+                        cmd.Parameters.AddWithValue("@Id", 0);
+                        cmd.Parameters.AddWithValue("@Productsetid", setId);
+                        cmd.Parameters.AddWithValue("@Productvariantsid", 0);
+                        cmd.Parameters.AddWithValue("@Itemname", "");
+                        cmd.Parameters.AddWithValue("@Qty", 0);
+                        cmd.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd.Parameters.AddWithValue("@Status", "");
+                        cmd.Parameters.AddWithValue("@Workstatus", "");
+                        cmd.Parameters.AddWithValue("@Query", 2);
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            while (r.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < r.FieldCount; i++)
+                                {
+                                    string col = r.GetName(i);
+                                    object val = r.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                items.Add(row);
+                            }
+                        }
+                    }
+
+                    var marketPlaces = new List<Dictionary<string, object>>();
+                    using (var cmd = new SqlCommand("Sp_Productsetmarketplaceadd", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Id", 0);
+                        cmd.Parameters.AddWithValue("@Userid", "");
+                        cmd.Parameters.AddWithValue("@Productid", productId);
+                        cmd.Parameters.AddWithValue("@Productsetid", setId);
+                        cmd.Parameters.AddWithValue("@Marketplacename", "");
+                        cmd.Parameters.AddWithValue("@Visibility", 0);
+                        cmd.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd.Parameters.AddWithValue("@Status", "");
+                        cmd.Parameters.AddWithValue("@Link", "");
+                        cmd.Parameters.AddWithValue("@Query", 2);
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            while (r.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < r.FieldCount; i++)
+                                {
+                                    string col = r.GetName(i);
+                                    object val = r.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                marketPlaces.Add(row);
+                            }
+                        }
+                    }
+
+                    var gallery = new List<Dictionary<string, object>>();
+                    using (var cmd = new SqlCommand("Gallery", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Product_id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Gallery_file", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@File_id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productvariants_id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productset_id", setId.ToString());
+                        cmd.Parameters.AddWithValue("@Productcombo_id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Query", 7);
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            while (r.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < r.FieldCount; i++)
+                                {
+                                    string col = r.GetName(i);
+                                    object val = r.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                gallery.Add(row);
+                            }
+                        }
+                    }
+
+                    var setDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                    foreach (DataColumn c in setRow.Table.Columns)
+                        setDict[c.ColumnName] = setRow[c] == DBNull.Value ? null : setRow[c];
+
+                    return Ok(new { success = true, set = setDict, items, marketPlaces, gallery });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetProductsetDetail: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>Sp_productset @Query 6 — product sets awaiting manager approval (excludes sets owned by <paramref name="userid"/>).</summary>
+        [HttpGet("sets/pending-approval")]
+        public IActionResult GetPendingSetsForApproval([FromQuery] string userid)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(userid))
+                    return BadRequest(new { success = false, message = "userid is required", list = Array.Empty<object>() });
+
+                var list = new List<Dictionary<string, object>>();
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    using (var cmd = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", userid.Trim());
+                        cmd.Parameters.AddWithValue("@Productid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Id", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Isdelete", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Workstatus", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Query", 6);
+                        cmd.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                list.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new { success = true, list, totalCount = list.Count });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetPendingSetsForApproval: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, list = Array.Empty<object>() });
+            }
+        }
+
+        /// <summary>Sp_productset @Query 7 — set <see cref="ProductSetApprovalDecision.Workstatus"/> (e.g. 1 approved, 3 rejected).</summary>
+        [HttpPost("sets/approval-decision")]
+        public IActionResult PostProductSetApprovalDecision([FromBody] ProductSetApprovalDecision body)
+        {
+            try
+            {
+                if (body == null || body.SetId <= 0)
+                    return BadRequest(new { success = false, message = "Invalid set id" });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    using (var cmd = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productid", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Id", body.SetId);
+                        cmd.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Isdelete", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Workstatus", body.Workstatus);
+                        cmd.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Query", 7);
+                        cmd.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                return Ok(new { success = true, message = "Updated" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostProductSetApprovalDecision: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>Legacy Getsetapprovalsfull: List1 = Sp_productset Q6, List2 = Sp_Variantsetcomments Q9 (set edit/delete requests).</summary>
+        [HttpGet("set-approvals-full")]
+        public IActionResult GetSetApprovalsFull([FromQuery] string userid, [FromQuery] int? registrationId = null)
+        {
+            int itemapprovalcount = 0;
+            int itemrequestcount = 0;
+            var list1 = new List<Dictionary<string, object>>();
+            var list2 = new List<Dictionary<string, object>>();
+
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    string? LookupRegUserid(int regId)
+                    {
+                        using var q = new SqlCommand("SELECT TOP (1) CAST(Userid AS NVARCHAR(255)) FROM Tbl_Registration WHERE id = @id", con);
+                        q.Parameters.AddWithValue("@id", regId);
+                        var o = q.ExecuteScalar();
+                        if (o == null || o == DBNull.Value) return null;
+                        var s = o.ToString()?.Trim();
+                        return string.IsNullOrWhiteSpace(s) ? null : s;
+                    }
+
+                    string uid = (userid ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(uid) && registrationId.HasValue && registrationId.Value > 0)
+                        uid = LookupRegUserid(registrationId.Value) ?? "";
+                    else if (!string.IsNullOrWhiteSpace(uid) && uid.All(char.IsDigit) && int.TryParse(uid, out int regFromDigits))
+                    {
+                        var lookedUp = LookupRegUserid(regFromDigits);
+                        if (!string.IsNullOrWhiteSpace(lookedUp))
+                            uid = lookedUp;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(uid))
+                        return BadRequest(new { success = false, message = "userid is required", List1 = list1, List2 = list2, itemapprovecount = 0, itemrequestcount = 0 });
+
+                    using (var cmd2 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd2.CommandType = CommandType.StoredProcedure;
+                        cmd2.Parameters.AddWithValue("@Userid", uid);
+                        cmd2.Parameters.AddWithValue("@Productid", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Id", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Isdelete", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Workstatus", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Query", 6);
+                        cmd2.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd2.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd2.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+
+                        using (var reader = cmd2.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                list1.Add(row);
+                            }
+                        }
+                    }
+
+                    itemapprovalcount = list1.Count;
+
+                    using (var cmd4 = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd4.CommandType = CommandType.StoredProcedure;
+                        cmd4.Parameters.AddWithValue("@Userid", uid);
+                        cmd4.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Productid", "");
+                        cmd4.Parameters.AddWithValue("@Productvariantsid", "");
+                        cmd4.Parameters.AddWithValue("@Productsetid", "");
+                        cmd4.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd4.Parameters.AddWithValue("@Comments", "");
+                        cmd4.Parameters.AddWithValue("@Commenttype", "Editrequest,Deleterequest");
+                        cmd4.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd4.Parameters.AddWithValue("@Status", "0");
+                        cmd4.Parameters.AddWithValue("@Role", "");
+                        cmd4.Parameters.AddWithValue("@Query", 9);
+
+                        using (var reader = cmd4.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                list2.Add(row);
+                            }
+                        }
+                    }
+
+                    itemrequestcount = list2.Count;
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    List1 = list1,
+                    List2 = list2,
+                    itemapprovecount = itemapprovalcount,
+                    itemrequestcount = itemrequestcount
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetSetApprovalsFull: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, List1 = list1, List2 = list2, itemapprovecount = 0, itemrequestcount = 0 });
+            }
+        }
+
+        /// <summary>
+        /// Legacy Saveseteditrequest: manager approve/reject set edit or delete request —
+        /// Sp_Variantsetcomments Q1 (replay), Comments Q6/Q7, Sp_productset Q8, Sp_Variantsetcomments Q10 + Q9 refresh.
+        /// When <see cref="VariantSetCommentProcess.Productsetid"/>, Userid, Productid, Commenttype are sent, runs full flow;
+        /// otherwise falls back to updating Tbl_Variantsetcomments by comment row <see cref="VariantSetCommentProcess.Id"/>.
+        /// </summary>
+        /// <remarks>Second route is the legacy MVC name <c>Saveseteditrequest</c> (same handler).</remarks>
+        [HttpPost("sets/variant-set-comment-process")]
+        [HttpPost("sets/saveseteditrequest")]
+        public IActionResult PostVariantSetCommentProcess([FromBody] VariantSetCommentProcess body)
+        {
+            try
+            {
+                if (body == null)
+                    return BadRequest(new { success = false, message = "Invalid body" });
+
+                bool fullSave =
+                    !string.IsNullOrWhiteSpace(body.Productsetid)
+                    && !string.IsNullOrWhiteSpace(body.Userid)
+                    && !string.IsNullOrWhiteSpace(body.Productid)
+                    && !string.IsNullOrWhiteSpace(body.Commenttype);
+
+                if (fullSave)
+                    return ExecuteSaveseteditrequest(body);
+
+                if (string.IsNullOrWhiteSpace(body.Id))
+                    return BadRequest(new { success = false, message = "Invalid id" });
+
+                if (!int.TryParse(body.Id.Trim(), out int commentId))
+                    return BadRequest(new { success = false, message = "Invalid id" });
+
+                string approver = body.Approved_Userid?.Trim() ?? "";
+                string statusVal = string.Equals(body.Status, "Approved", StringComparison.OrdinalIgnoreCase) ? "1" : "2";
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    using (var cmd = new SqlCommand(
+                        @"UPDATE Tbl_Variantsetcomments 
+                          SET Approved_Userid = @Approved_Userid, Status = @Status 
+                          WHERE Id = @Id AND Variantorset = N'Set'", con))
+                    {
+                        cmd.Parameters.AddWithValue("@Id", commentId);
+                        cmd.Parameters.AddWithValue("@Approved_Userid", approver);
+                        cmd.Parameters.AddWithValue("@Status", statusVal);
+                        int n = cmd.ExecuteNonQuery();
+                        if (n == 0)
+                            return BadRequest(new { success = false, message = "No row updated" });
+                    }
+                }
+
+                return Ok(new { success = true, message = "OK" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostVariantSetCommentProcess: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>Legacy MVC Saveseteditrequest — full SP chain for set edit/delete manager decision.</summary>
+        private IActionResult ExecuteSaveseteditrequest(VariantSetCommentProcess formData)
+        {
+            var variantrequest = new List<Dictionary<string, object>>();
+            string msg = "";
+            string approver = formData.Approved_Userid?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(approver))
+                return BadRequest(new { success = false, message = "Approved_Userid (manager) is required" });
+
+            // Legacy Saveseteditrequest: Commenttype is Editrequest or Deleterequest (DB / UI may vary spacing or casing).
+            string ctRaw = (formData.Commenttype ?? "").Trim();
+            string ctFold = new string(ctRaw.Where(c => !char.IsWhiteSpace(c)).ToArray());
+            string commentTypeReplay;
+            string commentTypeOriginal;
+            if (string.Equals(ctFold, "Editrequest", StringComparison.OrdinalIgnoreCase))
+            {
+                commentTypeReplay = "Editrequestreplay";
+                commentTypeOriginal = "Editrequest";
+            }
+            else if (string.Equals(ctFold, "Deleterequest", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(ctFold, "DeleteRequest", StringComparison.OrdinalIgnoreCase))
+            {
+                commentTypeReplay = "Deleterequestreplay";
+                commentTypeOriginal = "Deleterequest";
+            }
+            else
+                return BadRequest(new { success = false, message = "Commenttype must be Editrequest or Deleterequest (received: " + ctRaw + ")" });
+
+            bool approved = string.Equals(formData.Status, "Approved", StringComparison.OrdinalIgnoreCase);
+            string statusParam = approved ? "1" : "2";
+            string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+            string productSetId = formData.Productsetid!.Trim();
+            string comments = formData.Commentss ?? "";
+
+            string connectionString = _configuration.GetConnectionString("DefaultConnection");
+            try
+            {
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    using (var cmd4 = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd4.CommandType = CommandType.StoredProcedure;
+                        cmd4.Parameters.AddWithValue("@Userid", formData.Userid ?? "");
+                        cmd4.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Approved_Userid", approver);
+                        cmd4.Parameters.AddWithValue("@Productid", formData.Productid ?? "");
+                        cmd4.Parameters.AddWithValue("@Productvariantsid", "0");
+                        cmd4.Parameters.AddWithValue("@Productsetid", productSetId);
+                        cmd4.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+                        cmd4.Parameters.AddWithValue("@Comments", comments);
+                        cmd4.Parameters.AddWithValue("@Commenttype", commentTypeReplay);
+                        cmd4.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd4.Parameters.AddWithValue("@Status", statusParam);
+                        cmd4.Parameters.AddWithValue("@Role", "");
+                        cmd4.Parameters.AddWithValue("@Query", 1);
+                        cmd4.ExecuteNonQuery();
+                    }
+
+                    msg = "Response successfully saved";
+
+                    try
+                    {
+                        using (var cmd41 = new SqlCommand("Comments", con))
+                        {
+                            cmd41.CommandType = CommandType.StoredProcedure;
+                            cmd41.Parameters.AddWithValue("@id", "");
+                            cmd41.Parameters.AddWithValue("@Userid", formData.Userid ?? "");
+                            cmd41.Parameters.AddWithValue("@Accepted_Userid", "");
+                            cmd41.Parameters.AddWithValue("@Approved_Userid", "");
+                            cmd41.Parameters.AddWithValue("@Productid", formData.Productid ?? "");
+                            cmd41.Parameters.AddWithValue("@Checked_Date", "");
+                            cmd41.Parameters.AddWithValue("@Comments", "");
+                            cmd41.Parameters.AddWithValue("@Status", "");
+                            cmd41.Parameters.AddWithValue("@Query", 6);
+                            using (var da41 = new SqlDataAdapter(cmd41))
+                            {
+                                var dt41 = new DataTable();
+                                da41.Fill(dt41);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("ExecuteSaveseteditrequest Comments Q6: " + ex.Message);
+                    }
+
+                    try
+                    {
+                        using (var cmd411 = new SqlCommand("Comments", con))
+                        {
+                            cmd411.CommandType = CommandType.StoredProcedure;
+                            cmd411.Parameters.AddWithValue("@id", "");
+                            cmd411.Parameters.AddWithValue("@Userid", approver);
+                            cmd411.Parameters.AddWithValue("@Accepted_Userid", "");
+                            cmd411.Parameters.AddWithValue("@Approved_Userid", "");
+                            cmd411.Parameters.AddWithValue("@Productid", "");
+                            cmd411.Parameters.AddWithValue("@Checked_Date", "");
+                            cmd411.Parameters.AddWithValue("@Comments", "");
+                            cmd411.Parameters.AddWithValue("@Status", "");
+                            cmd411.Parameters.AddWithValue("@Query", 7);
+                            using (var da411 = new SqlDataAdapter(cmd411))
+                            {
+                                var dt411 = new DataTable();
+                                da411.Fill(dt411);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("ExecuteSaveseteditrequest Comments Q7: " + ex.Message);
+                    }
+
+                    string isDeleteVal;
+                    if (approved)
+                        isDeleteVal = string.Equals(commentTypeOriginal, "Deleterequest", StringComparison.OrdinalIgnoreCase) ? "1" : "0";
+                    else
+                        isDeleteVal = "0";
+
+                    string workStatusVal = approved ? "0" : "2";
+
+                    using (var cmd212 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd212.CommandType = CommandType.StoredProcedure;
+                        cmd212.Parameters.AddWithValue("@Id", productSetId);
+                        cmd212.Parameters.AddWithValue("@Userid", "");
+                        cmd212.Parameters.AddWithValue("@Productid", formData.Productid ?? "");
+                        cmd212.Parameters.AddWithValue("@Setname", "");
+                        cmd212.Parameters.AddWithValue("@Numberofpieces", "");
+                        cmd212.Parameters.AddWithValue("@Modelno", "");
+                        cmd212.Parameters.AddWithValue("@Batchno", "");
+                        cmd212.Parameters.AddWithValue("@EANBarcodeno", "");
+                        cmd212.Parameters.AddWithValue("@Isdelete", isDeleteVal);
+                        cmd212.Parameters.AddWithValue("@Status", "");
+                        cmd212.Parameters.AddWithValue("@Workstatus", workStatusVal);
+                        cmd212.Parameters.AddWithValue("@Query", 8);
+                        cmd212.ExecuteNonQuery();
+                    }
+
+                    using (var cmd42 = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd42.CommandType = CommandType.StoredProcedure;
+                        cmd42.Parameters.AddWithValue("@Userid", "");
+                        cmd42.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd42.Parameters.AddWithValue("@Approved_Userid", approver);
+                        cmd42.Parameters.AddWithValue("@Productid", "");
+                        cmd42.Parameters.AddWithValue("@Productvariantsid", "0");
+                        cmd42.Parameters.AddWithValue("@Productsetid", productSetId);
+                        cmd42.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd42.Parameters.AddWithValue("@Comments", "");
+                        cmd42.Parameters.AddWithValue("@Commenttype", commentTypeOriginal);
+                        cmd42.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd42.Parameters.AddWithValue("@Status", "");
+                        cmd42.Parameters.AddWithValue("@Role", "");
+                        cmd42.Parameters.AddWithValue("@Query", 10);
+                        cmd42.ExecuteNonQuery();
+                    }
+
+                    using (var cmd44 = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd44.CommandType = CommandType.StoredProcedure;
+                        cmd44.Parameters.AddWithValue("@Userid", approver);
+                        cmd44.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd44.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd44.Parameters.AddWithValue("@Productid", "");
+                        cmd44.Parameters.AddWithValue("@Productvariantsid", "");
+                        cmd44.Parameters.AddWithValue("@Productsetid", "");
+                        cmd44.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd44.Parameters.AddWithValue("@Comments", "");
+                        cmd44.Parameters.AddWithValue("@Commenttype", "Editrequest,Deleterequest");
+                        cmd44.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd44.Parameters.AddWithValue("@Status", "0");
+                        cmd44.Parameters.AddWithValue("@Role", "");
+                        cmd44.Parameters.AddWithValue("@Query", 9);
+
+                        using (var reader = cmd44.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                variantrequest.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = msg,
+                    List1 = variantrequest,
+                    totalcount = ""
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("ExecuteSaveseteditrequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, List1 = variantrequest, totalcount = "" });
+            }
+        }
+
+        /// <summary>True if this user already has a pending set edit request (Editrequest, Status 0, not approved yet).</summary>
+        private static bool HasPendingSetEditRequest(SqlConnection con, string productsetId, string userId)
+        {
+            using var cmd = new SqlCommand(
+                @"SELECT COUNT(1) FROM dbo.Tbl_Variantsetcomments
+WHERE Variantorset = N'Set'
+  AND LTRIM(RTRIM(ISNULL(Productsetid, N''))) = LTRIM(RTRIM(@Productsetid))
+  AND LTRIM(RTRIM(ISNULL(Userid, N''))) = LTRIM(RTRIM(@Userid))
+  AND Commenttype = N'Editrequest'
+  AND LTRIM(RTRIM(ISNULL(Status, N''))) = N'0'
+  AND (Approved_Userid IS NULL OR LTRIM(RTRIM(ISNULL(Approved_Userid, N''))) = N'')", con);
+            cmd.Parameters.AddWithValue("@Productsetid", productsetId.Trim());
+            cmd.Parameters.AddWithValue("@Userid", userId.Trim());
+            object? o = cmd.ExecuteScalar();
+            return o != null && o != DBNull.Value && Convert.ToInt32(o) > 0;
+        }
+
+        /// <summary>Whether the current user already submitted a pending edit request for this set.</summary>
+        [HttpGet("sets/pending-edit-request")]
+        public IActionResult GetPendingSetEditRequest([FromQuery] string setid, [FromQuery] string userid)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(setid) || string.IsNullOrWhiteSpace(userid))
+                    return BadRequest(new { success = false, message = "setid and userid are required", pending = false });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    bool pending = HasPendingSetEditRequest(con, setid, userid);
+                    return Ok(new { success = true, pending });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GetPendingSetEditRequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, pending = false });
+            }
+        }
+
+        /// <summary>Legacy Saveseteditcomments — approved set: send edit request (Sp_Variantsetcomments Q1).</summary>
+        [HttpPost("sets/edit-request")]
+        public IActionResult PostSaveSetEditRequest([FromBody] SetEditRequestPayload? body)
+        {
+            try
+            {
+                if (body == null || string.IsNullOrWhiteSpace(body.SetId) || string.IsNullOrWhiteSpace(body.Productid))
+                    return BadRequest(new { success = false, message = "SetId and Productid are required" });
+                if (string.IsNullOrWhiteSpace(body.Userid))
+                    return BadRequest(new { success = false, message = "Userid is required" });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    if (HasPendingSetEditRequest(con, body.SetId, body.Userid))
+                    {
+                        return Conflict(new
+                        {
+                            success = false,
+                            message = "You have already sent an edit request for this set. Please wait for manager approval."
+                        });
+                    }
+
+                    using (var cmd = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", body.Userid);
+                        cmd.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd.Parameters.AddWithValue("@Productid", body.Productid);
+                        cmd.Parameters.AddWithValue("@Productvariantsid", "0");
+                        cmd.Parameters.AddWithValue("@Productsetid", body.SetId);
+                        cmd.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+                        cmd.Parameters.AddWithValue("@Comments", body.Comments ?? "");
+                        cmd.Parameters.AddWithValue("@Commenttype", "Editrequest");
+                        cmd.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd.Parameters.AddWithValue("@Status", "0");
+                        cmd.Parameters.AddWithValue("@Role", "");
+                        cmd.Parameters.AddWithValue("@Query", 1);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                return Ok(new { success = true, message = "Edit request sent.Wait for manager approval" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostSaveSetEditRequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>Legacy checkdeleterequestset — Sp_Variantsetcomments Q8 (pending Deleterequest for set).</summary>
+        [HttpPost("sets/check-deleterequest")]
+        public IActionResult PostCheckDeleteRequestSet([FromBody] CheckDeleteRequestSetPayload? body)
+        {
+            var list1 = new List<Dictionary<string, object>>();
+            try
+            {
+                if (body == null || string.IsNullOrWhiteSpace(body.setid))
+                    return BadRequest(new { success = false, message = "setid is required", List1 = list1 });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    using (var cmd4 = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd4.CommandType = CommandType.StoredProcedure;
+                        cmd4.Parameters.AddWithValue("@Userid", "");
+                        cmd4.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Productid", "");
+                        cmd4.Parameters.AddWithValue("@Productvariantsid", "");
+                        cmd4.Parameters.AddWithValue("@Productsetid", body.setid.Trim());
+                        cmd4.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd4.Parameters.AddWithValue("@Comments", "");
+                        cmd4.Parameters.AddWithValue("@Commenttype", "Deleterequest");
+                        cmd4.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd4.Parameters.AddWithValue("@Status", "0");
+                        cmd4.Parameters.AddWithValue("@Role", "");
+                        cmd4.Parameters.AddWithValue("@Query", 8);
+
+                        using (var reader = cmd4.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    string col = reader.GetName(i);
+                                    object val = reader.GetValue(i);
+                                    row[col] = val == DBNull.Value ? null : val;
+                                }
+                                list1.Add(row);
+                            }
+                        }
+                    }
+                }
+
+                return Ok(new { success = true, List1 = list1, msg = list1.Count > 0 ? "Response successfully saved" : "" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostCheckDeleteRequestSet: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, List1 = list1 });
+            }
+        }
+
+        /// <summary>Legacy deleteSet — Sp_productset Q4 (soft delete set), Sp_setitems Q5, Sp_Productvariantssetlog Q1.</summary>
+        [HttpPost("sets/delete")]
+        public IActionResult PostDeleteSet([FromBody] DeleteSetPayload? body)
+        {
+            try
+            {
+                if (body == null || string.IsNullOrWhiteSpace(body.setId) || string.IsNullOrWhiteSpace(body.userid) || string.IsNullOrWhiteSpace(body.productid))
+                    return BadRequest(new { success = false, message = "setId, userid, and productid are required" });
+
+                if (!int.TryParse(body.setId.Trim(), out int setIdInt))
+                    return BadRequest(new { success = false, message = "Invalid set id" });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                string ts = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    using (var cmd21 = new SqlCommand("Sp_productset", con))
+                    {
+                        cmd21.CommandType = CommandType.StoredProcedure;
+                        cmd21.Parameters.AddWithValue("@Userid", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Productid", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Id", setIdInt);
+                        cmd21.Parameters.AddWithValue("@Setname", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Numberofpieces", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Modelno", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Batchno", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@EANBarcodeno", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Isdelete", 1);
+                        cmd21.Parameters.AddWithValue("@Status", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Workstatus", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Description", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Query", 4);
+                        cmd21.Parameters.AddWithValue("@Wholesalepriceset", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Retailpriceset", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Onlinepriceset", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Agecategory", (object)DBNull.Value);
+                        cmd21.Parameters.AddWithValue("@Short_description", (object)DBNull.Value);
+                        cmd21.Parameters.Add(new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output });
+                        cmd21.ExecuteNonQuery();
+                    }
+
+                    using (var cmd2 = new SqlCommand("Sp_setitems", con))
+                    {
+                        cmd2.CommandType = CommandType.StoredProcedure;
+                        cmd2.Parameters.AddWithValue("@Userid", "");
+                        cmd2.Parameters.AddWithValue("@Productid", "");
+                        cmd2.Parameters.AddWithValue("@Id", 0);
+                        cmd2.Parameters.AddWithValue("@Productsetid", setIdInt);
+                        cmd2.Parameters.AddWithValue("@Productvariantsid", 0);
+                        cmd2.Parameters.AddWithValue("@Itemname", "");
+                        cmd2.Parameters.AddWithValue("@Qty", 0);
+                        cmd2.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd2.Parameters.AddWithValue("@Status", "");
+                        cmd2.Parameters.AddWithValue("@Workstatus", "");
+                        cmd2.Parameters.AddWithValue("@Query", 5);
+                        cmd2.ExecuteNonQuery();
+                    }
+
+                    using (var sqlcommand5 = new SqlCommand("Sp_Productvariantssetlog", con))
+                    {
+                        sqlcommand5.CommandType = CommandType.StoredProcedure;
+                        sqlcommand5.Parameters.AddWithValue("@Productid", body.productid);
+                        sqlcommand5.Parameters.AddWithValue("@Userid", body.userid);
+                        sqlcommand5.Parameters.AddWithValue("@Productvariantsid", "0");
+                        sqlcommand5.Parameters.AddWithValue("@Productsetid", body.setId.Trim());
+                        sqlcommand5.Parameters.AddWithValue("@Productcomboid", DBNull.Value);
+                        sqlcommand5.Parameters.AddWithValue("@Actiontype", "Delete");
+                        sqlcommand5.Parameters.AddWithValue("@Date", ts);
+                        sqlcommand5.Parameters.AddWithValue("@Query", 1);
+                        sqlcommand5.ExecuteNonQuery();
+                    }
+                }
+
+                return Ok(new { success = true, message = "Deleted successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostDeleteSet: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>True if this user already has a pending set delete request.</summary>
+        private static bool HasPendingSetDeleteRequest(SqlConnection con, string productsetId, string userId)
+        {
+            using var cmd = new SqlCommand(
+                @"SELECT COUNT(1) FROM dbo.Tbl_Variantsetcomments
+WHERE Variantorset = N'Set'
+  AND LTRIM(RTRIM(ISNULL(Productsetid, N''))) = LTRIM(RTRIM(@Productsetid))
+  AND LTRIM(RTRIM(ISNULL(Userid, N''))) = LTRIM(RTRIM(@Userid))
+  AND Commenttype = N'Deleterequest'
+  AND LTRIM(RTRIM(ISNULL(Status, N''))) = N'0'
+  AND (Approved_Userid IS NULL OR LTRIM(RTRIM(ISNULL(Approved_Userid, N''))) = N'')", con);
+            cmd.Parameters.AddWithValue("@Productsetid", productsetId.Trim());
+            cmd.Parameters.AddWithValue("@Userid", userId.Trim());
+            object? o = cmd.ExecuteScalar();
+            return o != null && o != DBNull.Value && Convert.ToInt32(o) > 0;
+        }
+
+        /// <summary>Legacy Saveseteditcomments delete branch — Sp_Variantsetcomments Q1 (Deleterequest).</summary>
+        [HttpPost("sets/delete-request")]
+        public IActionResult PostSaveSetDeleteRequest([FromBody] SetEditRequestPayload? body)
+        {
+            try
+            {
+                if (body == null || string.IsNullOrWhiteSpace(body.SetId) || string.IsNullOrWhiteSpace(body.Productid))
+                    return BadRequest(new { success = false, message = "SetId and Productid are required" });
+                if (string.IsNullOrWhiteSpace(body.Userid))
+                    return BadRequest(new { success = false, message = "Userid is required" });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+                    if (HasPendingSetDeleteRequest(con, body.SetId, body.Userid))
+                    {
+                        return Conflict(new
+                        {
+                            success = false,
+                            message = "You have already sent a delete request for this set. Please wait for manager approval."
+                        });
+                    }
+
+                    using (var cmd = new SqlCommand("Sp_Variantsetcomments", con))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Userid", body.Userid);
+                        cmd.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd.Parameters.AddWithValue("@Productid", body.Productid);
+                        cmd.Parameters.AddWithValue("@Productvariantsid", "0");
+                        cmd.Parameters.AddWithValue("@Productsetid", body.SetId);
+                        cmd.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+                        cmd.Parameters.AddWithValue("@Comments", body.Comments ?? "");
+                        cmd.Parameters.AddWithValue("@Commenttype", "Deleterequest");
+                        cmd.Parameters.AddWithValue("@Variantorset", "Set");
+                        cmd.Parameters.AddWithValue("@Status", "0");
+                        cmd.Parameters.AddWithValue("@Role", "");
+                        cmd.Parameters.AddWithValue("@Query", 1);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                return Ok(new { success = true, message = "Delete request sent. Wait for manager approval" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostSaveSetDeleteRequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
         }
 
         [HttpDelete("deleteproductcombo/{id}")]
@@ -1236,6 +3089,7 @@ namespace Api.Controllers
                     }
 
                     // Step 1: Update/Insert Attributes (Child Rows)
+                    // React UI sends column_0 = main variant id for every row; in DB each attribute is a separate child row (Parentid = mainId).
                     foreach (var rowData in data.tableData1)
                     {
                         string itemname = "", itemvalue = "", parentitem = "";
@@ -1243,25 +3097,46 @@ namespace Api.Controllers
                         if (rowData.ContainsKey("column_1")) itemname = rowData["column_1"];
                         if (rowData.ContainsKey("column_2")) itemvalue = rowData["column_2"];
 
-                        if (!string.IsNullOrEmpty(parentitem))
+                        // Skip empty rows
+                        if (string.IsNullOrWhiteSpace(itemname) && string.IsNullOrWhiteSpace(itemvalue))
+                            continue;
+
+                        string mainId = data.formData.id.ToString();
+                        bool isUpdateFlow = !isNewVariant && !string.IsNullOrWhiteSpace(mainId) && mainId != "0";
+
+                        // Determine which record to update/insert:
+                        // - New variant: insert child rows (Parentid = mainId) after main insert sets data.formData.id
+                        // - Update variant: update existing child row by (Parentid, Varianttype). If not found, insert a new child.
+                        int? childId = null;
+                        if (isUpdateFlow)
                         {
-                            using (SqlCommand cmd = new SqlCommand("select Parentid from Tbl_Productvariants where Id=@Id", con))
+                            using (var lookup = new SqlCommand(
+                                @"SELECT TOP (1) Id
+                                  FROM Tbl_Productvariants
+                                  WHERE Isdelete = 0
+                                    AND Parentid = @Parentid
+                                    AND Varianttype = @Varianttype
+                                  ORDER BY Id ASC", con))
                             {
-                                cmd.Parameters.AddWithValue("@Id", parentitem);
-                                var pid = cmd.ExecuteScalar();
-                                if (pid != null && Convert.ToInt32(pid) == 0) parentidnew = parentitem;
+                                lookup.Parameters.AddWithValue("@Parentid", mainId);
+                                lookup.Parameters.AddWithValue("@Varianttype", itemname.Trim());
+                                var o = lookup.ExecuteScalar();
+                                if (o != null && o != DBNull.Value && int.TryParse(o.ToString(), out int cid))
+                                    childId = cid;
                             }
                         }
+
+                        bool doInsertChild = !isUpdateFlow || childId == null;
 
                         using (SqlCommand cmd2 = new SqlCommand("Sp_Productvariants", con))
                         {
                             cmd2.CommandType = CommandType.StoredProcedure;
-                            cmd2.Parameters.AddWithValue("@Id", string.IsNullOrEmpty(parentitem) ? (object)DBNull.Value : parentitem);
-                            cmd2.Parameters.AddWithValue("@Userid", string.IsNullOrEmpty(parentitem) ? data.formData.userid : "");
-                            cmd2.Parameters.AddWithValue("@Productid", string.IsNullOrEmpty(parentitem) ? data.formData.productid : "");
-                            cmd2.Parameters.AddWithValue("@Productname", string.IsNullOrEmpty(parentitem) ? data.formData.productname : "");
-                            cmd2.Parameters.AddWithValue("@Varianttype", itemname ?? "");
-                            cmd2.Parameters.AddWithValue("@Value", itemvalue ?? "");
+                            cmd2.Parameters.AddWithValue("@Id", doInsertChild ? "" : childId.Value.ToString());
+                            cmd2.Parameters.AddWithValue("@Userid", doInsertChild ? data.formData.userid : "");
+                            cmd2.Parameters.AddWithValue("@Productid", doInsertChild ? (data.formData.productid ?? "") : "");
+                            cmd2.Parameters.AddWithValue("@Productname", doInsertChild ? (data.formData.productname ?? "") : "");
+                            cmd2.Parameters.AddWithValue("@Varianttype", itemname.Trim());
+                            cmd2.Parameters.AddWithValue("@Value", (itemvalue ?? "").Trim());
                             cmd2.Parameters.AddWithValue("@Totalqty", DBNull.Value);
                             cmd2.Parameters.AddWithValue("@Noofqty_online", data.formData.totalqtyonline ?? "0");
                             cmd2.Parameters.AddWithValue("@Modelno", data.formData.modelno ?? "");
@@ -1273,8 +3148,8 @@ namespace Api.Controllers
                             cmd2.Parameters.AddWithValue("@Managerapprovestatus", "0");
                             cmd2.Parameters.AddWithValue("@Warehouseapprovestatus", "0");
                             cmd2.Parameters.AddWithValue("@Accountsapprovestatus", "0");
-                            cmd2.Parameters.AddWithValue("@Parentid", !string.IsNullOrEmpty(parentitem) ? "" : data.formData.id.ToString());
-                            cmd2.Parameters.AddWithValue("@Ischild", !string.IsNullOrEmpty(parentitem) ? 0 : 1);
+                            cmd2.Parameters.AddWithValue("@Parentid", mainId);
+                            cmd2.Parameters.AddWithValue("@Ischild", 1);
                             cmd2.Parameters.AddWithValue("@Date", DateTime.Now.ToString("MMM d yyyy h:mmtt"));
                             cmd2.Parameters.AddWithValue("@Description", data.formData.Description ?? "");
                             cmd2.Parameters.AddWithValue("@Itemname", data.formData.Itemname ?? "");
@@ -1298,28 +3173,19 @@ namespace Api.Controllers
                             cmd2.Parameters.AddWithValue("@Country_orgin", data.formData.Country_orgin ?? "");
                             cmd2.Parameters.AddWithValue("@Short_description", data.formData.Short_description ?? "");
                             cmd2.Parameters.AddWithValue("@Brandid", data.formData.Brandid ?? "");
-                            
+
                             double lengthCm = (double)(SafeConvertToDecimal(data.formData.Length) ?? 0);
                             double widthCm = (double)(SafeConvertToDecimal(data.formData.Width) ?? 0);
                             double heightCm = (double)(SafeConvertToDecimal(data.formData.Height) ?? 0);
                             double cbm = (lengthCm / 100.0) * (widthCm / 100.0) * (heightCm / 100.0);
                             cmd2.Parameters.AddWithValue("@CBM", cbm);
-                            cmd2.Parameters.AddWithValue("@Query", string.IsNullOrEmpty(parentitem) ? 1 : 2);
-                            
-                            // Capture the ID for new variants
+                            cmd2.Parameters.AddWithValue("@Query", doInsertChild ? 1 : 2);
+
                             var pOutId = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
                             cmd2.Parameters.Add(pOutId);
-                            
                             cmd2.ExecuteNonQuery();
-                            
-                            // If it was a new variant insertion, update the ID in formData for subsequent steps
-                            if (string.IsNullOrEmpty(parentitem) && (data.formData.id == 0 || data.formData.id.ToString() == "0"))
-                            {
-                                if (pOutId.Value != DBNull.Value)
-                                {
-                                    data.formData.id = Convert.ToInt32(pOutId.Value);
-                                }
-                            }
+
+                            // If this was the first insert of a brand-new main variant, keep main id stable (handled earlier).
                         }
                     }
 
@@ -1903,6 +3769,27 @@ namespace Api.Controllers
         public List<ItemData> tableData1 { get; set; }
     }
 
+    public class ProductSetListDto
+    {
+        public int id { get; set; }
+        public string Userid { get; set; }
+        public string Productid { get; set; }
+        public string Productname { get; set; }
+        public string Setname { get; set; }
+        public string Numberofpieces { get; set; }
+        public string Modelno { get; set; }
+        public string Batchno { get; set; }
+        public string EANBarcodeno { get; set; }
+        public string Isdelete { get; set; }
+        public string Status { get; set; }
+        public string Workstatus { get; set; }
+        public string Username { get; set; }
+        public string Description { get; set; }
+        public string Wholesalepriceset { get; set; }
+        public string Retailpriceset { get; set; }
+        public string Onlinepriceset { get; set; }
+    }
+
     public class SetFormData
     {
         public string id { get; set; } // Added for editing
@@ -1923,6 +3810,14 @@ namespace Api.Controllers
         public string Hscode { get; set; }
         public string Countryoforgin { get; set; }
         public string Productid { get; set; }
+        /// <summary>Sp_productset (product set, not combo)</summary>
+        public string Productname { get; set; }
+        public string Numberofpieces { get; set; }
+        public string Agecategory { get; set; }
+        /// <summary>Tbl_Productset.Status (e.g. Active) — used by edit set.</summary>
+        public string status { get; set; }
+        /// <summary>Tbl_Productset.Workstatus (approval workflow).</summary>
+        public int Workstatus { get; set; }
     }
 
     public class MarketplaceData
@@ -1934,8 +3829,40 @@ namespace Api.Controllers
 
     public class ItemData
     {
+        /// <summary>Tbl_Setitems.Id when updating an existing line; 0 or omitted for new lines.</summary>
+        public int id { get; set; }
         public string variantid { get; set; }
+        public string Itemname { get; set; }
         public object Qty { get; set; } // Qty can be string or int from JSON
+    }
+
+    /// <summary>Manager decision for Tbl_Productset.Workstatus (Sp_productset Q7).</summary>
+    public class ProductSetApprovalDecision
+    {
+        public int SetId { get; set; }
+        /// <summary>1 = approved, 3 = rejected (align with product set UI).</summary>
+        public int Workstatus { get; set; }
+    }
+
+    /// <summary>Legacy Saveseteditrequest / variant-set-comment-process body.</summary>
+    public class VariantSetCommentProcess
+    {
+        /// <summary>Comment row id — used only by legacy UPDATE fallback when Productsetid is not sent.</summary>
+        public string? Id { get; set; }
+        /// <summary>Requester (employee) user id.</summary>
+        public string? Userid { get; set; }
+        /// <summary>Manager approving/rejecting.</summary>
+        public string? Approved_Userid { get; set; }
+        public string? Productid { get; set; }
+        /// <summary>Product set id (Tbl_Productset) — required for full Saveseteditrequest flow.</summary>
+        public string? Productsetid { get; set; }
+        /// <summary>Manager remarks (legacy property name Commentss).</summary>
+        public string? Commentss { get; set; }
+        /// <summary>Editrequest or Deleterequest.</summary>
+        public string? Commenttype { get; set; }
+        /// <summary>Approved or Rejected.</summary>
+        public string? Status { get; set; }
+        public string? Firstname { get; set; }
     }
 
     public class Variants
@@ -2026,5 +3953,17 @@ namespace Api.Controllers
         public string Userid { get; set; }
         public string Commentss { get; set; }
         
+    }
+
+    public class DeleteSetPayload
+    {
+        public string? setId { get; set; }
+        public string? userid { get; set; }
+        public string? productid { get; set; }
+    }
+
+    public class CheckDeleteRequestSetPayload
+    {
+        public string? setid { get; set; }
     }
 }

@@ -449,6 +449,149 @@ namespace Api.Controllers
                 }
             }
         }
+        [HttpGet("set-status")]
+        public async Task<IActionResult> Setstatuscost([FromQuery] string costId)
+        {
+            string message;
+            string connectionString = _configuration.GetConnectionString("DefaultConnection");
+
+            try
+            {
+                using (var connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    using (var command = new SqlCommand("Sp_Costing", connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+
+                        command.Parameters.AddWithValue("@Id", costId);
+                        command.Parameters.AddWithValue("@Status", "Approved");
+                        command.Parameters.AddWithValue("@Userid", DBNull.Value);
+                        command.Parameters.AddWithValue("@Supplierid", DBNull.Value);
+                        command.Parameters.AddWithValue("@Purchaseid", DBNull.Value);
+                        command.Parameters.AddWithValue("@Exchangerate", DBNull.Value);
+                        command.Parameters.AddWithValue("@Cargocost", DBNull.Value);
+                        command.Parameters.AddWithValue("@Expensecost", DBNull.Value);
+                        command.Parameters.AddWithValue("@Totalcost", DBNull.Value);
+                        command.Parameters.AddWithValue("@Isdelete", DBNull.Value);
+                        command.Parameters.AddWithValue("@Enterdate", DateTime.UtcNow);
+                        command.Parameters.AddWithValue("@Query", 5);
+
+                        await command.ExecuteNonQueryAsync();
+                    }
+
+                    DataTable dt = new DataTable();
+                    using (var fetchCommand = new SqlCommand("Sp_Productcost", connection))
+                    {
+                        fetchCommand.CommandType = CommandType.StoredProcedure;
+                        fetchCommand.Parameters.AddWithValue("@Id", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Costid", costId);
+                        fetchCommand.Parameters.AddWithValue("@Purchaseid", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Itemid", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Aedprice", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Cost", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@TotalCost", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Diamondmargin", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Diamondmsp", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Goldmargin", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Goldmsp", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Silvermargin", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Silvermsp", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Isdelete", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Status", DBNull.Value);
+                        fetchCommand.Parameters.AddWithValue("@Query", 7);
+
+                        using (SqlDataAdapter da = new SqlDataAdapter(fetchCommand))
+                        {
+                            da.Fill(dt);
+                        }
+                    }
+
+                    foreach (DataRow row in dt.Rows)
+                    {
+                        string itemid = row["Itemid"].ToString();
+
+                        using (var archiveCmd = new SqlCommand("Sp_Productcost", connection))
+                        {
+                            archiveCmd.CommandType = CommandType.StoredProcedure;
+                            archiveCmd.Parameters.AddWithValue("@Id", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Costid", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Purchaseid", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Itemid", itemid);
+                            archiveCmd.Parameters.AddWithValue("@Qty", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Aedprice", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Cost", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@TotalCost", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Diamondmargin", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Diamondmsp", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Goldmargin", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Goldmsp", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Silvermargin", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Silvermsp", DBNull.Value);
+                            archiveCmd.Parameters.AddWithValue("@Isdelete", "0");
+                            archiveCmd.Parameters.AddWithValue("@Status", "Archived");
+                            archiveCmd.Parameters.AddWithValue("@Status1", "Approved");
+                            archiveCmd.Parameters.AddWithValue("@Query", 6);
+                            await archiveCmd.ExecuteNonQueryAsync();
+                        }
+
+                        using (SqlCommand cmd = new SqlCommand("Sp_Productcost", connection))
+                        {
+                            cmd.CommandType = CommandType.StoredProcedure;
+                            cmd.Parameters.AddWithValue("@Id", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Costid", costId);
+                            cmd.Parameters.AddWithValue("@Purchaseid", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Itemid", itemid);
+                            cmd.Parameters.AddWithValue("@Qty", row["Qty"]);
+                            cmd.Parameters.AddWithValue("@Aedprice", row["Aedprice"]);
+                            cmd.Parameters.AddWithValue("@Cost", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@TotalCost", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Diamondmargin", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Diamondmsp", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Goldmargin", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Goldmsp", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Silvermargin", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Silvermsp", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Status", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Isdelete", DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Query", 8);
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+
+                        using (var insertCmd = new SqlCommand("Sp_Productcost", connection))
+                        {
+                            insertCmd.CommandType = CommandType.StoredProcedure;
+                            insertCmd.Parameters.AddWithValue("@Id", DBNull.Value);
+                            insertCmd.Parameters.AddWithValue("@Costid", costId);
+                            insertCmd.Parameters.AddWithValue("@Purchaseid", row["Purchaseid"]);
+                            insertCmd.Parameters.AddWithValue("@Itemid", itemid);
+                            insertCmd.Parameters.AddWithValue("@Aedprice", row["Aedprice"]);
+                            insertCmd.Parameters.AddWithValue("@Cost", row["Cost"]);
+                            insertCmd.Parameters.AddWithValue("@TotalCost", row["Totalcost"]);
+                            insertCmd.Parameters.AddWithValue("@Diamondmargin", row["Diamondmargin"]);
+                            insertCmd.Parameters.AddWithValue("@Diamondmsp", row["Diamondmsp"]);
+                            insertCmd.Parameters.AddWithValue("@Goldmargin", row["Goldmargin"]);
+                            insertCmd.Parameters.AddWithValue("@Goldmsp", row["Goldmsp"]);
+                            insertCmd.Parameters.AddWithValue("@Silvermargin", row["Silvermargin"]);
+                            insertCmd.Parameters.AddWithValue("@Silvermsp", row["Silvermsp"]);
+                            insertCmd.Parameters.AddWithValue("@Isdelete", "0");
+                            insertCmd.Parameters.AddWithValue("@Status", "Approved");
+                            insertCmd.Parameters.AddWithValue("@Qty", row["Qty"]);
+                            insertCmd.Parameters.AddWithValue("@Query", 1);
+                            await insertCmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    message = "Purchase cost is approved";
+                }
+                return Ok(new { success = true, message = message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { success = false, message = "An error occurred: " + ex.Message });
+            }
+        }
 
         [HttpGet("expenses/{costId}")]
         public async Task<IActionResult> GetExpenses(int costId)

@@ -22,6 +22,7 @@ import ProductApprovalSection from './ProductApprovalSection';
 import ProductEditRequestSection from './ProductEditRequestSection';
 import ProductApprovalDetails from './ProductApprovalDetails';
 import ItemApprovalSection from './ItemApprovalSection';
+import SetApprovalSection from './SetApprovalSection';
 import SupplierSection from './SupplierSection';
 import SupplierDetailView from './SupplierDetailView';
 import SupplierCreateBill from './SupplierCreateBill';
@@ -348,7 +349,8 @@ const SUBMODULE_SECTION_MAPPING = {
   'Warehouse': 'purchase-warehouse-hub',
   'reports': 'report-section',
   'report': 'report-section',
-  'analytics': 'report-section'
+  'analytics': 'report-section',
+  'approval-set-hub': 'approval-set-hub'
 };
 
 // SVG Icon Component Helper
@@ -728,6 +730,7 @@ const Dashboard = () => {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [pendingEditCount, setPendingEditCount] = useState(0);
   const [pendingItemApprovalCount, setPendingItemApprovalCount] = useState(0);
+  const [pendingSetApprovalCount, setPendingSetApprovalCount] = useState(0);
   const [pendingPurchaseCount, setPendingPurchaseCount] = useState(0);
 
   // Memoize user from localStorage to prevent infinite re-render loops
@@ -768,6 +771,26 @@ const Dashboard = () => {
           setPendingEditCount(list.length);
         })
         .catch(err => console.error("Error fetching edit request count:", err));
+    }
+
+    if (activeSection === 'approval-set-hub') {
+      const uidHub =
+        [user.Userid, user.userid, user.UserId, user.userId].find(
+          (x) => x != null && String(x).trim() !== ''
+        ) ||
+        String(user.Id ?? user.id ?? '').trim();
+      if (uidHub) {
+        fetch(`${API_URL}/api/product/set-approvals-full?userid=${encodeURIComponent(uidHub)}`)
+          .then((res) => res.json().then((data) => ({ res, data })))
+          .then(({ res, data }) => {
+            if (!res.ok) return;
+            if (data?.success === true || data?.success === undefined) {
+              setPendingSetApprovalCount(data.itemapprovecount ?? 0);
+              setPendingEditCount(data.itemrequestcount ?? 0);
+            }
+          })
+          .catch(err => console.error('Error fetching approval set hub counts:', err));
+      }
     }
     if (activeSection === 'approval-item-hub' || activeSection === 'dashboard') {
       const currentUserId = user.Userid || user.userid || user.id || user.Id || '';
@@ -840,6 +863,7 @@ const Dashboard = () => {
       'configuration': 'settings',
       'approvals': 'approvals',
       'approval': 'approvals',
+      'managers': 'users',
       'workflow': 'workflow',
       'purchase approval': 'approvals',
       'purchase-approval': 'approvals'
@@ -969,7 +993,9 @@ const Dashboard = () => {
       'sales quote': 'salesquote',
       'sales-quote': 'salesquote',
       'quote': 'salesquote',
-      'quotes': 'salesquote'
+      'quotes': 'salesquote',
+      'approval set hub': 'approvals',
+      'approval-set-hub': 'approvals'
     };
 
     // Use appropriate icon map based on type
@@ -1437,21 +1463,6 @@ const Dashboard = () => {
             });
           }
 
-          // Set Approval (Managers only)
-          const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-          const currentRole = (currentUser.Role || currentUser.role || '').toString().toLowerCase();
-          const isManagerOnly = currentRole.includes('manager') && !currentRole.includes('admin');
-          const hasSetApproval = approvalsModule.submenus.some(sm =>
-            sm.id === 'set-approval' || (sm.label || '').toLowerCase().includes('set approval')
-          );
-          if (!hasSetApproval && (currentRole.includes('manager') || currentRole.includes('admin'))) {
-            approvalsModule.submenus.push({
-              id: 'set-approval',
-              label: 'Set Approval',
-              icon: getIconForMenu('Approvals', 'submodule')
-            });
-          }
-
           // Product Approval Request
           const hasProductApproval = approvalsModule.submenus.some(sm =>
             sm.id === 'approval-product-request' || sm.label.toLowerCase().includes('approval request')
@@ -1476,17 +1487,16 @@ const Dashboard = () => {
             });
           }
 
-          // Set Approvals (Managers only)
-          const roleLowerForSet = (user?.Role || user?.role || '').toString().toLowerCase();
-          const isManagerRole = roleLowerForSet.includes('manager');
-          const hasSetApprovals = approvalsModule.submenus.some(sm =>
-            sm.id === 'set-approvals' || (sm.label || '').toLowerCase().includes('set approvals')
+          // Approval Set (Managers only) — hub for set approvals + edit & request (same routes as /approval-set-hub)
+          const rlMgr = (userRole || '').toString().toLowerCase();
+          const hasApprovalSetHub = approvalsModule.submenus.some(sm =>
+            sm.id === 'approval-set-hub' || (sm.label || '').toLowerCase().replace(/\s/g, '').includes('approvalset')
           );
-          if (isManagerRole && !hasSetApprovals) {
+          if (rlMgr.includes('manager') && !hasApprovalSetHub) {
             approvalsModule.submenus.push({
-              id: 'set-approvals',
-              label: 'Set Approvals',
-              icon: getIconForMenu('Approvals', 'submodule')
+              id: 'approval-set-hub',
+              label: 'Approval Set',
+              icon: getIconForMenu('Approval Set Hub', 'submodule')
             });
           }
         }
@@ -1936,6 +1946,12 @@ const Dashboard = () => {
 
             <Typography variant="h6" fontWeight={700} sx={{ color: '#1e293b', display: { xs: 'none', sm: 'block' } }}>
               {(() => {
+                const setHubSectionLabels = {
+                  'approval-set-approvals': 'Set Approvals',
+                  'approval-set-edit-request': 'Edit & Request'
+                };
+                if (setHubSectionLabels[activeSection]) return setHubSectionLabels[activeSection];
+
                 // 1. Try to find the label in menuItems
                 for (const item of menuItems) {
                   if (item.id === activeSection) return item.label;
@@ -2775,6 +2791,90 @@ const Dashboard = () => {
         {activeSection === 'approval-item-request' && (
           <div className="admin-page-container">
             <ItemApprovalSection onNavigate={() => { setActiveSection('approval-item-hub'); navigate('/approval-item-hub'); }} />
+          </div>
+        )}
+
+        {activeSection === 'approval-set-hub' && (
+          <div className="admin-page-container">
+            <div className="settings-section">
+              <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IconSVG name="approvals" size={24} />
+                Approval-Set Module
+              </h2>
+              <p className="section-description">Manage product set approvals and catalog edit requests for sets.</p>
+
+              <div className="approval-hub-grid">
+                <div
+                  className="hub-card-modern"
+                  onClick={() => {
+                    setActiveSection('approval-set-approvals');
+                    navigate('/approval-set-approvals');
+                  }}
+                >
+                  <div className="hub-icon-wrap" style={{ background: '#ecfdf5', color: '#10b981' }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  </div>
+                  <div className="hub-content">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Set Approvals</h3>
+                      {pendingSetApprovalCount > 0 && (
+                        <span className="pending-badge-modern">{pendingSetApprovalCount} Pending</span>
+                      )}
+                    </div>
+                    <p>Review and approve or reject product sets pending manager sign-off.</p>
+                  </div>
+                  <div className="hub-arrow">→</div>
+                </div>
+
+                <div
+                  className="hub-card-modern"
+                  onClick={() => {
+                    setActiveSection('approval-set-edit-request');
+                    navigate('/approval-set-edit-request');
+                  }}
+                >
+                  <div className="hub-icon-wrap" style={{ background: '#eff6ff', color: '#3b82f6' }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </div>
+                  <div className="hub-content">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Edit &amp; Request</h3>
+                      {pendingEditCount > 0 && (
+                        <span className="pending-badge-modern" style={{ background: '#3b82f6' }}>{pendingEditCount} Pending</span>
+                      )}
+                    </div>
+                    <p>Product edit and delete requests (same queue as Approvals → Edit Request).</p>
+                  </div>
+                  <div className="hub-arrow">→</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'approval-set-approvals' && (
+          <div className="admin-page-container">
+            <SetApprovalSection
+              onBack={() => {
+                setActiveSection('approval-set-hub');
+                navigate('/approval-set-hub');
+              }}
+            />
+          </div>
+        )}
+
+        {activeSection === 'approval-set-edit-request' && (
+          <div className="admin-page-container">
+            <ProductEditRequestSection
+              variantSetRequestMode
+              pageTitle="Edit & Request"
+              pageSubtitle="Manage and review set edit/delete requests (pending manager action)."
+              showBackLink
+              onBack={() => {
+                setActiveSection('approval-set-hub');
+                navigate('/approval-set-hub');
+              }}
+            />
           </div>
         )}
 

@@ -68,7 +68,7 @@ const CostingManagementSection = () => {
     const [selectedSession, setSelectedSession] = useState(null);
     const [activeStep, setActiveStep] = useState(0);
     const steps = ['Cost Details', 'Margin Price', 'Confirm'];
-    const [expenses, setExpenses] = useState([{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+    const [expenses, setExpenses] = useState([{ id: 1, vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
     const [tabValue, setTabValue] = useState(0);
     const [page, setPage] = useState(1);
     const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -124,7 +124,8 @@ const CostingManagementSection = () => {
                             vendor: x.VendorName || x.vendor || x.Vendor || '',
                             vendorId: x.VendorId || x.vendorId || x.Vendorid || null,
                             amount: parseFloat(x.Amount || x.amount || 0) || 0,
-                            refNo: x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || '',
+                            refNo: String(x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || ''),
+                            invoiceDbId: String(x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || ''),
                             type: x.Type || x.type || ''
                         }));
                         setLinkedExpenses(mapped);
@@ -167,15 +168,20 @@ const CostingManagementSection = () => {
 
                 // Prefill expenses in the editable grid from the linked expenses shown in view
                 if (Array.isArray(linkedExpenses) && linkedExpenses.length > 0) {
-                    const mapped = linkedExpenses.map((e, idx) => ({
-                        id: Date.now() + idx,
-                        vendor: e.vendor || e.Vendor || e.VendorName || '',
-                        amount: parseFloat(e.amount ?? e.Amount ?? 0) || '',
-                        refNo: e.refNo || e.RefNo || e.InvoiceNo || '',
-                        vendorId: e.vendorId || e.VendorId || null,
-                        vendorInvoices: []
-                    }));
-                    setExpenses(mapped.length > 0 ? mapped : [{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+                    const mapped = linkedExpenses.map((e, idx) => {
+                        const vId = e.vendorId || e.VendorId || null;
+                        if (vId) setTimeout(() => fetchVendorInvoices(vId, idx), 50);
+                        return {
+                            id: Date.now() + idx,
+                            vendor: e.vendor || e.Vendor || e.VendorName || '',
+                            amount: parseFloat(e.amount ?? e.Amount ?? 0) || '',
+                            refNo: String(e.refNo ?? e.RefNo ?? e.InvoiceNo ?? ''),
+                            invoiceDbId: String(e.invoiceDbId ?? e.refNo ?? e.RefNo ?? e.InvoiceNo ?? ''),
+                            vendorId: vId,
+                            vendorInvoices: []
+                        };
+                    });
+                    setExpenses(mapped.length > 0 ? mapped : [{ id: 1, vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
                 } else {
                     // Fallback: load from backend if view state didn't fetch yet
                     const costId = selectedSession?.Id || selectedSession?.Costid || selectedSession?.costid;
@@ -184,18 +190,23 @@ const CostingManagementSection = () => {
                             .then(r => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
                             .then(data => {
                                 const list = data?.data || data?.List1 || data?.list1 || [];
-                                const mapped = list.map((x, idx) => ({
-                                    id: Date.now() + idx,
-                                    vendor: x.VendorName || x.vendor || x.Vendor || '',
-                                    vendorId: x.VendorId || x.vendorId || x.Vendorid || null,
-                                    amount: parseFloat(x.Amount || x.amount || 0) || '',
-                                    refNo: x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || '',
-                                    vendorInvoices: []
-                                }));
-                                setExpenses(mapped.length > 0 ? mapped : [{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+                                const mapped = list.map((x, idx) => {
+                                    const vId = x.VendorId || x.vendorId || x.Vendorid || null;
+                                    if (vId) setTimeout(() => fetchVendorInvoices(vId, idx), 50);
+                                    return {
+                                        id: Date.now() + idx,
+                                        vendor: x.VendorName || x.vendor || x.Vendor || '',
+                                        vendorId: vId,
+                                        amount: parseFloat(x.Amount || x.amount || 0) || '',
+                                        refNo: String(x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || ''),
+                                        invoiceDbId: String(x.InvoiceNo || x.Invoiceno || x.invoiceNo || x.RefNo || ''),
+                                        vendorInvoices: []
+                                    };
+                                });
+                                setExpenses(mapped.length > 0 ? mapped : [{ id: 1, vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
                             })
                             .catch(() => {
-                                setExpenses([{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+                                setExpenses([{ id: 1, vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
                             });
                     }
                 }
@@ -242,7 +253,7 @@ const CostingManagementSection = () => {
     };
 
     const addExpenseRow = () => {
-        setExpenses([...expenses, { id: Date.now(), vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+        setExpenses([...expenses, { id: Date.now(), vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
     };
 
     const addSupplierInvoiceAsExpense = (invoice) => {
@@ -252,6 +263,7 @@ const CostingManagementSection = () => {
             vendor: selectedSupplier.supplierdisplayname || selectedSupplier.Supplierdisplayname || '',
             vendorId: selectedSupplier.id || selectedSupplier.Id || null,
             refNo: invoice.billNo || invoice.Billno || '',
+            invoiceDbId: invoice.id || invoice.Id || '',
             amount: invoice.amount || invoice.Grand_Total || invoice.Grand_total || 0,
             vendorInvoices: [] // not needed for supplier link
         };
@@ -269,7 +281,7 @@ const CostingManagementSection = () => {
     const handleClose = () => {
         setIsModalOpen(false);
         setActiveStep(0);
-        setExpenses([{ id: 1, vendor: '', amount: '', refNo: '', vendorId: null, vendorInvoices: [] }]);
+        setExpenses([{ id: 1, vendor: '', amount: '', refNo: '', invoiceDbId: null, vendorId: null, vendorInvoices: [] }]);
         setSelectedSupplier(null);
         setPurchaseInvoice('');
     };
@@ -299,9 +311,23 @@ const CostingManagementSection = () => {
             const response = await fetch(url);
             if (response.ok) {
                 const data = await response.json();
-                const newExpenses = [...expenses];
-                newExpenses[index].vendorInvoices = data.data || [];
-                setExpenses(newExpenses);
+                const invList = data.data || [];
+                setExpenses(prev => {
+                    const newExpenses = [...prev];
+                    if (newExpenses[index]) {
+                        newExpenses[index].vendorInvoices = invList;
+                        // Auto-resolve ID if current refNo matches a bill in the list
+                        if (newExpenses[index].refNo && !newExpenses[index].invoiceDbId) {
+                            const match = invList.find(inv => 
+                                String(inv.Referenceno || inv.Reference || inv.InvoiceNo || inv.Invoiceno || inv.Billno || inv.billno || inv.Ref || '') === String(newExpenses[index].refNo)
+                            );
+                            if (match) {
+                                newExpenses[index].invoiceDbId = match.Id || match.id;
+                            }
+                        }
+                    }
+                    return newExpenses;
+                });
             }
         } catch (error) {
             console.error('Error fetching vendor invoices:', error);
@@ -482,7 +508,7 @@ const CostingManagementSection = () => {
         if (!isModalOpen || !selectedSession || !Array.isArray(invoices) || invoices.length === 0) return;
         const purchaseId = selectedSession?.Purchaseid ?? selectedSession?.PurchaseId ?? selectedSession?.purchaseid ?? selectedSession?.BillId ?? selectedSession?.billid;
         if (!purchaseId) return;
-        const inv = invoices.find(b => (b.id || b.Id) === purchaseId);
+        const inv = invoices.find(b => String(b.id || b.Id) === String(purchaseId));
         if (inv) {
             setSelectedInvoice(inv);
             setPurchaseInvoice(inv.billNo || '');
@@ -720,6 +746,8 @@ const CostingManagementSection = () => {
                 maxWidth="xl"
                 fullWidth
                 fullScreen={isMobile}
+                disableEnforceFocus
+                disableRestoreFocus
                 PaperProps={{
                     sx: { 
                         borderRadius: isMobile ? 0 : '24px', 
@@ -977,8 +1005,8 @@ const CostingManagementSection = () => {
                                                             }}
                                                             value={
                                                                 expense.vendorInvoices?.find(inv => {
-                                                                    const ref = inv.Referenceno || inv.Reference || inv.InvoiceNo || inv.Invoiceno || inv.Billno || inv.billno || inv.Ref;
-                                                                    return ref === expense.refNo;
+                                                                    const ref = String(inv.Referenceno || inv.Reference || inv.InvoiceNo || inv.Invoiceno || inv.Billno || inv.billno || inv.Ref || '');
+                                                                    return ref === String(expense.refNo) || String(inv.Id) === String(expense.invoiceDbId || expense.refNo) || String(inv.id) === String(expense.invoiceDbId || expense.refNo);
                                                                 }) || expense.refNo
                                                             }
                                                             freeSolo
@@ -996,18 +1024,26 @@ const CostingManagementSection = () => {
                                                                 const newExpenses = [...expenses];
                                                                 if (typeof newValue === 'string') {
                                                                     newExpenses[index].refNo = newValue;
+                                                                    newExpenses[index].invoiceDbId = null;
                                                                 } else if (newValue) {
                                                                     newExpenses[index].refNo = newValue.Referenceno || newValue.Reference || newValue.InvoiceNo || newValue.Invoiceno || newValue.Billno || newValue.billno || newValue.Ref || '';
+                                                                    newExpenses[index].invoiceDbId = newValue.Id || newValue.id || newExpenses[index].refNo;
                                                                     newExpenses[index].amount = newValue.Amount || newValue.Grand_Total || newValue.Grand_total || newValue.Totalamount || newValue.totalamount || 0;
                                                                 } else {
                                                                     newExpenses[index].refNo = '';
+                                                                    newExpenses[index].invoiceDbId = null;
                                                                 }
                                                                 setExpenses(newExpenses);
                                                             }}
                                                             onInputChange={(event, newInputValue) => {
                                                                 if (event && event.type === 'change') {
                                                                     const newExpenses = [...expenses];
+                                                                    const oldRef = newExpenses[index].refNo;
                                                                     newExpenses[index].refNo = newInputValue;
+                                                                    // Only clear ID if the text actually changed to something that doesn't match the current ID's label
+                                                                    if (newInputValue !== oldRef) {
+                                                                        newExpenses[index].invoiceDbId = null;
+                                                                    }
                                                                     setExpenses(newExpenses);
                                                                 }
                                                             }}
@@ -1117,28 +1153,68 @@ const CostingManagementSection = () => {
 
                     {activeStep === 1 && (
                         <Box>
-                            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 3 }}>
-                                <PaymentsIcon sx={{ color: '#ef4444', fontSize: 24 }} />
-                                <Typography variant="h6" fontWeight={900} color="#ef4444">Margin Price Calculator</Typography>
+                            <Stack 
+                                direction={{ xs: 'column', md: 'row' }} 
+                                spacing={2} 
+                                alignItems={{ xs: 'flex-start', md: 'center' }} 
+                                sx={{ mb: 3 }}
+                            >
+                                <Stack direction="row" spacing={1.5} alignItems="center">
+                                    <Avatar sx={{ bgcolor: alpha('#ef4444', 0.1), color: '#ef4444', width: 40, height: 40 }}>
+                                        <PaymentsIcon sx={{ fontSize: 24 }} />
+                                    </Avatar>
+                                    <Box>
+                                        <Typography variant="h6" fontWeight={900} color="#0f172a">Margin Price Calculator</Typography>
+                                        <Typography variant="caption" color="#64748b" fontWeight={700}>Set global margins or adjust individually</Typography>
+                                    </Box>
+                                </Stack>
+                                
                                 <Box sx={{ flexGrow: 1 }} />
-                                <Stack direction="row" spacing={2}>
-                                    <TextField label="Diamond %" size="small" value={marginStrategy.diamond} onChange={(e) => setMarginStrategy({ ...marginStrategy, diamond: e.target.value })} sx={{ width: 100 }} />
-                                    <TextField label="Gold %" size="small" value={marginStrategy.gold} onChange={(e) => setMarginStrategy({ ...marginStrategy, gold: e.target.value })} sx={{ width: 100 }} />
-                                    <TextField label="Silver %" size="small" value={marginStrategy.silver} onChange={(e) => setMarginStrategy({ ...marginStrategy, silver: e.target.value })} sx={{ width: 100 }} />
+                                
+                                <Stack direction="row" spacing={1} sx={{ width: { xs: '100%', md: 'auto' }, overflowX: 'auto', pb: { xs: 1, md: 0 } }}>
+                                    {[
+                                        { label: 'Diamond %', key: 'diamond', color: '#3b82f6' },
+                                        { label: 'Gold %', key: 'gold', color: '#f59e0b' },
+                                        { label: 'Silver %', key: 'silver', color: '#64748b' }
+                                    ].map((strat) => (
+                                        <TextField
+                                            key={strat.key}
+                                            label={strat.label}
+                                            size="small"
+                                            value={marginStrategy[strat.key]}
+                                            onChange={(e) => setMarginStrategy({ ...marginStrategy, [strat.key]: e.target.value })}
+                                            sx={{ 
+                                                minWidth: { xs: 90, sm: 100 },
+                                                '& .MuiInputLabel-root': { fontSize: '0.75rem', fontWeight: 800 },
+                                                '& .MuiOutlinedInput-root': { borderRadius: '12px', bgcolor: 'white' }
+                                            }}
+                                        />
+                                    ))}
                                 </Stack>
                             </Stack>
-                            <TableContainer sx={{ borderRadius: '16px', border: '1px solid #e2e8f0', bgcolor: 'white' }}>
-                                <Table sx={{ minWidth: 1200 }}>
-                                    <TableHead sx={{ bgcolor: alpha('#1e293b', 0.9) }}>
+                            
+                            <TableContainer sx={{ 
+                                borderRadius: '16px', 
+                                border: '1px solid #e2e8f0', 
+                                bgcolor: 'white',
+                                maxHeight: { xs: 'calc(100vh - 350px)', md: '600px' },
+                                overflowX: 'auto',
+                                '&::-webkit-scrollbar': { height: '8px' },
+                                '&::-webkit-scrollbar-thumb': { bgcolor: '#cbd5e1', borderRadius: '10px' }
+                            }}>
+                                <Table stickyHeader sx={{ minWidth: 1200 }}>
+                                    <TableHead>
                                         <TableRow>
                                             {['Product', 'Qty', 'Unit Price', 'AED Price', 'Cost', 'Totalcost', 'Diamond Margin(%)', 'Diamond MSP', 'Gold Margin(%)', 'Gold MSP', 'Silver Margin(%)', 'Silver MSP'].map((h, i) => (
                                                 <TableCell key={h} sx={{ 
+                                                    bgcolor: alpha('#1e293b', 0.95),
                                                     color: 'white', 
                                                     fontWeight: 800, 
                                                     fontSize: '0.65rem',
                                                     textTransform: 'uppercase',
                                                     letterSpacing: '0.05em',
-                                                    py: 1.5
+                                                    py: 2,
+                                                    borderBottom: 'none'
                                                 }}>
                                                     {h}
                                                 </TableCell>
@@ -1150,7 +1226,6 @@ const CostingManagementSection = () => {
                                             const totalExpenses = expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
                                             const currentTotalQty = billItems.reduce((sum, b) => sum + (parseFloat(b.Qty) || 0), 0);
                                             const expensePerUnit = currentTotalQty > 0 ? totalExpenses / currentTotalQty : 0;
-
                                             const qtyNum = parseFloat(item.Qty || 0);
                                             const unitPriceINR = parseFloat(item.Amount || 0);
                                             const aedPrice = unitPriceINR * exchangeRate;
@@ -1416,7 +1491,7 @@ const CostingManagementSection = () => {
                                         let invoiceIdx = 0;
                                         expenses.forEach((e) => {
                                             const vendorId = e.vendorId || '';
-                                            const invoiceId = e.refNo || '';
+                                            const invoiceId = e.invoiceDbId || e.refNo || '';
                                             const amount = parseFloat(e.amount) || 0;
                                             if (vendorId && invoiceId) {
                                                 formData.append(`Invoices[${invoiceIdx}].VendorId`, String(vendorId));
@@ -1479,7 +1554,7 @@ const CostingManagementSection = () => {
                                         // Store the source expense row Id in InvoiceId (instead of human-readable invoice number)
                                         const invoicesPayload = (expenses || []).map(e => ({
                                             VendorId: (e.vendorId !== undefined && e.vendorId !== null && e.vendorId !== '') ? String(e.vendorId) : null,
-                                            InvoiceId: (e.id ?? e.Id ?? e.refNo ?? '') !== '' ? String(e.id ?? e.Id ?? e.refNo ?? '') : '',
+                                            InvoiceId: (e.invoiceDbId || e.refNo || '') !== '' ? String(e.invoiceDbId || e.refNo || '') : '',
                                             Amount: String(e.amount ?? 0)
                                         }));
 
@@ -1620,6 +1695,8 @@ const CostingManagementSection = () => {
                 onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { handleCloseViewModal(event, reason); } }}
                 maxWidth="xl"
                 fullWidth
+                disableEnforceFocus
+                disableRestoreFocus
                 PaperProps={{
                     sx: { borderRadius: '24px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', width: '95vw', maxWidth: 1600 }
                 }}
@@ -1836,131 +1913,65 @@ const CostingManagementSection = () => {
                                 </Box>
                             </Stack>
 
-                            <Button
-                                variant="contained"
-                                fullWidth
-                                onClick={async () => {
-                                    try {
-                                        const userData = JSON.parse(localStorage.getItem('user') || '{}');
-                                        const uid = userData.userid || userData.Userid || userData.id || userData.Id || '1';
-                                        const supId = selectedSupplier?.id || selectedSupplier?.Id || selectedSession?.Supplierid || selectedSession?.SupplierId;
-                                        const billId = selectedInvoice?.id || selectedInvoice?.Id || selectedSession?.Purchaseid || selectedSession?.PurchaseId;
+                            {((selectedSession?.Status || selectedSession?.status || '').toLowerCase() !== 'approved') && (
+                                <>
+                                    <Button
+                                        variant="contained"
+                                        fullWidth
+                                        onClick={() => {
+                                            const costId = selectedSession?.Id || selectedSession?.Costid || selectedSession?.costid;
+                                            if (!costId) {
+                                                Swal.fire('Error', 'Session ID not found', 'error');
+                                                return;
+                                            }
 
-                                        // Aggregate expense totals
-                                        const supIdForUpdate = String(supId || selectedSession?.Supplierid || selectedSession?.SupplierId || '');
-                                        const isSup = (v) => String(v ?? '') === supIdForUpdate && supIdForUpdate !== '';
-                                        const totalAllLinked = (linkedExpenses && linkedExpenses.length > 0)
-                                            ? linkedExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
-                                            : 0;
-                                        const cargoTotalLinked = (linkedExpenses && linkedExpenses.length > 0)
-                                            ? linkedExpenses.reduce((s, e) => s + (isSup(e.vendorId) || isSup(e.VendorId) ? (parseFloat(e.amount) || 0) : 0), 0)
-                                            : 0;
-                                        const expenseTotal = totalAllLinked; // expenses = all services; cargo = base cost
-
-                                        // Base AED from items
-                                        const baseAed = billItems.reduce((sum, i) => {
-                                            const inr = parseFloat(i.Amount) || 0;
-                                            return sum + inr * (parseFloat(i.Currency_rate) || exchangeRate || 0);
-                                        }, 0);
-
-                                        // Build invoices payload from linkedExpenses (vendorId + refNo + amount)
-                                        // Prefer saving the expense Id; fallback to refNo if Id is unavailable
-                                        const invoicesPayload = (linkedExpenses || []).map(e => ({
-                                            VendorId: (e.vendorId ?? e.VendorId) != null && (e.vendorId ?? e.VendorId) !== '' ? String(e.vendorId ?? e.VendorId) : null,
-                                            InvoiceId: (e.id ?? e.Id ?? e.refNo ?? e.RefNo ?? '') !== '' ? String(e.id ?? e.Id ?? e.refNo ?? e.RefNo ?? '') : '',
-                                            Amount: String(e.amount ?? e.Amount ?? 0)
-                                        }));
-
-                                        // Distribute expenses proportionally by item AED
-                                        const itemsTotalAed = Math.max(baseAed, 1);
-                                        const marginItemsPayload = (billItems || []).map(i => {
-                                            const qty = parseFloat(i.Qty) || 0;
-                                            const itemAed = (parseFloat(i.Amount) || 0) * (parseFloat(i.Currency_rate) || exchangeRate || 0);
-                                            const expShare = (itemAed / itemsTotalAed) * expenseTotal;
-                                            const unitCost = itemAed + expShare;
-                                            const totalCost = unitCost; // stored procedure expects per-unit in Aedprice/Cost and total in Totalcost; using per-unit total here
-
-                                            const dm = parseFloat(marginStrategy.diamond) || 0;
-                                            const gm = parseFloat(marginStrategy.gold) || 0;
-                                            const sm = parseFloat(marginStrategy.silver) || 0;
-                                            const mspD = unitCost * (1 + dm / 100);
-                                            const mspG = unitCost * (1 + gm / 100);
-                                            const mspS = unitCost * (1 + sm / 100);
-
-                                            return {
-                                                ItemId: String(i.Itemid || i.ItemId || ''),
-                                                ItemName: String(i.Itemname || i.ItemName || ''),
-                                                Qty: String(qty),
-                                                UnitPrice: String(parseFloat(i.Amount) || 0),
-                                                AedPrice: String(itemAed.toFixed(2)),
-                                                Cost: String(unitCost.toFixed(2)),
-                                                Totalcost: String(totalCost.toFixed(2)),
-                                                Diamondmargin: String(dm),
-                                                Diamondmsp: String(mspD.toFixed(2)),
-                                                Goldmargin: String(gm),
-                                                Goldmsp: String(mspG.toFixed(2)),
-                                                Silvermargin: String(sm),
-                                                Silvermsp: String(mspS.toFixed(2))
-                                            };
-                                        });
-
-                                        const rawId = selectedSession?.Id || selectedSession?.Costid || selectedSession?.costid || '';
-                                        const numericId = Number(rawId);
-                                        const payload = {
-                                            // Backend expects Id as string; always send string
-                                            Id: Number.isFinite(numericId) ? String(numericId) : '',
-                                            SupplierId: supId ? String(supId) : null,
-                                            Purchaseid: billId ? String(billId) : null,
-                                            CargoCost: String(baseAed.toFixed(2)),
-                                            ExpenseCost: String(expenseTotal.toFixed(2)),
-                                            TotalCost: String((baseAed + totalAllLinked).toFixed(2)),
-                                            Exchangerate: String(exchangeRate),
-                                            UserId: String(uid),
-                                            Invoices: invoicesPayload,
-                                            MarginItems: marginItemsPayload
-                                        };
-                                        if (payload.Id === '' || payload.Id === null || payload.Id === undefined) {
-                                            Swal.fire('Error', 'Missing session Id to update. Please re-open the session and try again.', 'error');
-                                            return;
-                                        }
-
-                                        const res = await fetch(`${API_URL}/api/costing/edit-session`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify(payload)
-                                        });
-                                        let result;
-                                        try {
-                                            result = await res.json();
-                                        } catch {
-                                            result = null;
-                                        }
-                                        if (res.ok && result?.success !== false) {
                                             Swal.fire({
-                                                title: 'Success!',
-                                                text: (result.message || 'Updated successfully!'),
-                                                icon: 'success'
+                                                title: 'Confirm Approval',
+                                                text: 'Type "yes" to approve this costing.',
+                                                input: 'text',
+                                                inputPlaceholder: 'Type yes to confirm',
+                                                icon: 'warning',
+                                                showCancelButton: true,
+                                                confirmButtonText: 'Submit',
+                                                cancelButtonText: 'Cancel',
+                                                inputValidator: (value) => {
+                                                    if (!value || value.toLowerCase() !== 'yes') {
+                                                        return 'You must type "yes" to confirm approval.';
+                                                    }
+                                                }
+                                            }).then(async (result) => {
+                                                if (result.isConfirmed) {
+                                                    try {
+                                                        const response = await fetch(`${API_URL}/api/costing/set-status?costId=${costId}`);
+                                                        const data = await response.json();
+                                                        
+                                                        if (response.ok && data.success !== false) {
+                                                            Swal.fire({
+                                                                title: 'Approved!',
+                                                                text: data.message || 'Purchase cost is approved',
+                                                                icon: 'success'
+                                                            });
+                                                            handleCloseViewModal();
+                                                            fetchSessions();
+                                                        } else {
+                                                            Swal.fire('Error', data.message || 'Failed to approve costing', 'error');
+                                                        }
+                                                    } catch (error) {
+                                                        console.error(error);
+                                                        Swal.fire('Error', 'Connection error while approving', 'error');
+                                                    }
+                                                }
                                             });
-                                            setIsModalOpen(false);
-                                            setActiveStep(0);
-                                            fetchSessions();
-                                        } else {
-                                            const serverMessage = (result && (result.message || result.error || result.details)) ? (result.message || result.error || result.details) : (await res.text().catch(() => ''));
-                                            console.error('Costing edit-session failed', { status: res.status, statusText: res.statusText, serverMessage, payload });
-                                            Swal.fire('Error', serverMessage || `Failed to update session (HTTP ${res.status})`, 'error');
-                                        }
-                                    } catch (err) {
-                                        console.error(err);
-                                        Swal.fire('Error', 'Unexpected error while finalizing costing', 'error');
-                                    }
-                                }}
-                                sx={{ bgcolor: '#3b82f6', borderRadius: '12px', py: 1.5, fontWeight: 900, textTransform: 'none', mt: 4, mb: 1, '&:hover': { bgcolor: '#2563eb' }, boxShadow: '0 8px 16px -4px rgba(59, 130, 246, 0.3)' }}
-                            >
-                                Confirm & Approve
-                            </Button>
-                            <Typography variant="caption" color="#94a3b8" fontWeight={600} textAlign="center" display="block">
-                                Action will finalize this costing session
-                            </Typography>
+                                        }}
+                                        sx={{ bgcolor: '#3b82f6', borderRadius: '12px', py: 1.5, fontWeight: 900, textTransform: 'none', mt: 4, mb: 1, '&:hover': { bgcolor: '#2563eb' }, boxShadow: '0 8px 16px -4px rgba(59, 130, 246, 0.3)' }}
+                                    >
+                                        Confirm & Approve
+                                    </Button>
+                                    <Typography variant="caption" color="#94a3b8" fontWeight={600} textAlign="center" display="block">
+                                        Action will finalize this costing session
+                                    </Typography>
+                                </>
+                            )}
                         </Grid>
                     </Grid>
                 </DialogContent>

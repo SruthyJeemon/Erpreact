@@ -2777,12 +2777,12 @@
 }
 
 .swal-custom-title {
-    font-size: 1.2rem !important;
+    font-size: 1rem !important;
     color: #1e293b !important;
 }
 
 .swal-custom-text {
-    font-size: 14px !important;
+    font-size: 12px !important;
     color: #64748b !important;
 }
 
@@ -2794,7 +2794,7 @@ div:where(.swal2-container) div:where(.swal2-html-container) {
     padding: 1em 1.6em 0.3em !important;
     overflow: auto;
     color: inherit;
-    font-size: 14px !important;
+    font-size: 12px !important;
     font-weight: normal;
     line-height: normal;
     text-align: center;
