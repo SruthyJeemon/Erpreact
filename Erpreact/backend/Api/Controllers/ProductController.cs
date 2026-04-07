@@ -213,7 +213,8 @@ namespace Api.Controllers
                                         Reorderqty = reader.HasColumn("Reorderqty") ? reader["Reorderqty"]?.ToString() : "0",
                                         Defaultlocation = reader.HasColumn("Defaultlocation") ? reader["Defaultlocation"]?.ToString() : "",
                                         Remarks = reader.HasColumn("Remarks") ? reader["Remarks"]?.ToString() : "",
-                                        Agecategory = reader.HasColumn("Agecategory") ? reader["Agecategory"]?.ToString() : ""
+                                        Agecategory = reader.HasColumn("Agecategory") ? reader["Agecategory"]?.ToString() : "",
+                                        Brandid = reader.HasColumn("Brandid") ? reader["Brandid"]?.ToString() : ""
                                     };
                                     rawVariants.Add(v);
                                 }
@@ -224,6 +225,9 @@ namespace Api.Controllers
                             }
                         }
                     }
+
+                    // Sp_Productvariants @Query=10 often omits columns in #TempResults12; load view fields from table.
+                    await EnrichVariantViewFieldsFromDbAsync(con, rawVariants);
                 }
 
                 // Consolidate duplicates by Item Characteristics to handle split IDs
@@ -265,6 +269,7 @@ namespace Api.Controllers
                     first.Width = PickFirstNonNull(v => v.Width);
                     first.Height = PickFirstNonNull(v => v.Height);
                     first.Weight = PickFirstNonNull(v => v.Weight);
+                    first.Brandid = PickFirstNonEmpty(v => v.Brandid);
                     
                     // Approval Statuses (Text based)
                     first.managerStatus = first.Managerapprovestatus;
@@ -314,7 +319,16 @@ namespace Api.Controllers
                     using (SqlCommand cmd = new SqlCommand("Sp_Productmarketplaceadd", con))
                     {
                         cmd.CommandType = CommandType.StoredProcedure;
+                        // Stored procedure requires a full parameter set even for Query=4 (select).
+                        cmd.Parameters.AddWithValue("@Userid", DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Productid", DBNull.Value);
                         cmd.Parameters.AddWithValue("@Productvariantsid", productId);
+                        cmd.Parameters.AddWithValue("@Marketplacename", DBNull.Value);
+                        cmd.Parameters.AddWithValue("@Visibility", 0);
+                        cmd.Parameters.AddWithValue("@Isdelete", 0);
+                        cmd.Parameters.AddWithValue("@Status", "");
+                        cmd.Parameters.AddWithValue("@Link", "");
+                        cmd.Parameters.AddWithValue("@Id", DBNull.Value);
                         cmd.Parameters.AddWithValue("@Query", 4);
                         
                         using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
@@ -2441,6 +2455,80 @@ WHERE Variantorset = N'Set'
             }
         }
 
+        /// <summary>
+        /// Delete (soft delete) a product variant item by id.
+        /// Uses Sp_Productvariants Q4 which deletes the row and its children (Id or Parentid = Id).
+        /// </summary>
+        [HttpPost("variants/delete")]
+        public IActionResult PostDeleteVariant([FromBody] DeleteVariantPayload? body)
+        {
+            try
+            {
+                if (body == null || string.IsNullOrWhiteSpace(body.variantId) || string.IsNullOrWhiteSpace(body.userid) || string.IsNullOrWhiteSpace(body.productid))
+                    return BadRequest(new { success = false, message = "variantId, userid, and productid are required" });
+
+                if (!int.TryParse(body.variantId.Trim(), out int variantIdInt))
+                    return BadRequest(new { success = false, message = "Invalid variant id" });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                string ts = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+
+                using (var con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    using (var cmd2 = new SqlCommand("Sp_Productvariants", con))
+                    {
+                        cmd2.CommandType = CommandType.StoredProcedure;
+                        cmd2.Parameters.AddWithValue("@Id", variantIdInt);
+                        cmd2.Parameters.AddWithValue("@Userid", "");
+                        cmd2.Parameters.AddWithValue("@Productid", "");
+                        cmd2.Parameters.AddWithValue("@Productname", "");
+                        cmd2.Parameters.AddWithValue("@Varianttype", "");
+                        cmd2.Parameters.AddWithValue("@Value", "");
+                        cmd2.Parameters.AddWithValue("@Totalqty", "");
+                        cmd2.Parameters.AddWithValue("@Noofqty_online", "");
+                        cmd2.Parameters.AddWithValue("@Modelno", "");
+                        cmd2.Parameters.AddWithValue("@Warehousecheck", "");
+                        cmd2.Parameters.AddWithValue("@Batchno", "");
+                        cmd2.Parameters.AddWithValue("@EANBarcodeno", "");
+                        cmd2.Parameters.AddWithValue("@Isdelete", 1);
+                        cmd2.Parameters.AddWithValue("@Status", "");
+                        cmd2.Parameters.AddWithValue("@Managerapprovestatus", "");
+                        cmd2.Parameters.AddWithValue("@Warehouseapprovestatus", "");
+                        cmd2.Parameters.AddWithValue("@Accountsapprovestatus", "");
+                        cmd2.Parameters.AddWithValue("@Parentid", "");
+                        cmd2.Parameters.AddWithValue("@Ischild", "");
+                        cmd2.Parameters.AddWithValue("@Date", "");
+                        cmd2.Parameters.AddWithValue("@Query", 4);
+                        cmd2.ExecuteNonQuery();
+                    }
+
+                    // Log (best-effort, keep same style as sets)
+                    using (var sqlcommand5 = new SqlCommand("Sp_Productvariantssetlog", con))
+                    {
+                        sqlcommand5.CommandType = CommandType.StoredProcedure;
+                        sqlcommand5.Parameters.AddWithValue("@Productid", body.productid);
+                        sqlcommand5.Parameters.AddWithValue("@Userid", body.userid);
+                        sqlcommand5.Parameters.AddWithValue("@Productvariantsid", body.variantId.Trim());
+                        sqlcommand5.Parameters.AddWithValue("@Productsetid", "0");
+                        sqlcommand5.Parameters.AddWithValue("@Productcomboid", DBNull.Value);
+                        sqlcommand5.Parameters.AddWithValue("@Actiontype", "Delete");
+                        sqlcommand5.Parameters.AddWithValue("@Date", ts);
+                        sqlcommand5.Parameters.AddWithValue("@Query", 1);
+                        sqlcommand5.ExecuteNonQuery();
+                    }
+                }
+
+                return Ok(new { success = true, message = "Deleted successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PostDeleteVariant: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
         /// <summary>True if this user already has a pending set delete request.</summary>
         private static bool HasPendingSetDeleteRequest(SqlConnection con, string productsetId, string userId)
         {
@@ -3038,9 +3126,124 @@ WHERE Variantorset = N'Set'
                 {
                     con.Open();
 
+                    // Use the first non-empty attribute (Varianttype/Value) as the parent row's Varianttype/Value.
+                    // This is purely for easier viewing; all attributes are still stored as child rows.
+                    string parentVariantType = "";
+                    string parentVariantValue = "";
+                    if (data.tableData1 != null)
+                    {
+                        foreach (var rowData in data.tableData1)
+                        {
+                            var vt = rowData != null && rowData.ContainsKey("column_1") ? (rowData["column_1"] ?? "") : "";
+                            var vv = rowData != null && rowData.ContainsKey("column_2") ? (rowData["column_2"] ?? "") : "";
+                            vt = (vt ?? "").Trim();
+                            vv = (vv ?? "").Trim();
+                            if (!string.IsNullOrWhiteSpace(vt) || !string.IsNullOrWhiteSpace(vv))
+                            {
+                                parentVariantType = vt;
+                                parentVariantValue = vv;
+                                break;
+                            }
+                        }
+                    }
+
+                    // If it's a new variant, insert ONE parent row first and capture the new Id.
+                    // Child attribute rows must have Parentid = mainId; otherwise we end up with multiple parent rows (duplicates).
+                    if (isNewVariant)
+                    {
+                        using (SqlCommand cmdIns = new SqlCommand("Sp_Productvariants", con))
+                        {
+                            cmdIns.CommandType = CommandType.StoredProcedure;
+                            cmdIns.Parameters.AddWithValue("@Userid", data.formData.userid ?? "");
+                            cmdIns.Parameters.AddWithValue("@Productid", data.formData.productid ?? "");
+                            cmdIns.Parameters.AddWithValue("@Productname", data.formData.productname ?? "");
+                            cmdIns.Parameters.AddWithValue("@Varianttype", string.IsNullOrWhiteSpace(parentVariantType) ? (object)DBNull.Value : parentVariantType);
+                            cmdIns.Parameters.AddWithValue("@Value", string.IsNullOrWhiteSpace(parentVariantValue) ? (object)DBNull.Value : parentVariantValue);
+                            cmdIns.Parameters.AddWithValue("@Totalqty", DBNull.Value);
+                            cmdIns.Parameters.AddWithValue("@Noofqty_online", data.formData.totalqtyonline ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Modelno", data.formData.modelno ?? "");
+                            cmdIns.Parameters.AddWithValue("@Batchno", data.formData.batchno ?? "");
+                            cmdIns.Parameters.AddWithValue("@EANBarcodeno", data.formData.barcodeno ?? "");
+                            cmdIns.Parameters.AddWithValue("@Isdelete", 0);
+                            cmdIns.Parameters.AddWithValue("@Status", data.formData.status ?? "Active");
+                            cmdIns.Parameters.AddWithValue("@Warehousecheck", data.formData.Warehousecheck ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Managerapprovestatus", "0");
+                            cmdIns.Parameters.AddWithValue("@Warehouseapprovestatus", "0");
+                            cmdIns.Parameters.AddWithValue("@Accountsapprovestatus", "0");
+                            cmdIns.Parameters.AddWithValue("@Parentid", 0);
+                            cmdIns.Parameters.AddWithValue("@Ischild", 1);
+                            cmdIns.Parameters.AddWithValue("@Date", DateTime.Now.ToString("MMM d yyyy h:mmtt"));
+                            cmdIns.Parameters.AddWithValue("@Description", data.formData.Description ?? "");
+                            cmdIns.Parameters.AddWithValue("@Itemname", data.formData.Itemname ?? "");
+                            cmdIns.Parameters.AddWithValue("@Wholesaleprice", data.formData.Wholesaleprice ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Retailprice", data.formData.Retailprice ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Onlineprice", data.formData.Onlineprice ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Reorderpoint", data.formData.Reorderpoint ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Reorderqty", data.formData.Reorderqty ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Defaultlocation", data.formData.Defaultlocation ?? "");
+                            cmdIns.Parameters.AddWithValue("@Length", SafeConvertToDecimal(data.formData.Length) ?? (object)DBNull.Value);
+                            cmdIns.Parameters.AddWithValue("@Width", SafeConvertToDecimal(data.formData.Width) ?? (object)DBNull.Value);
+                            cmdIns.Parameters.AddWithValue("@Height", SafeConvertToDecimal(data.formData.Height) ?? (object)DBNull.Value);
+                            cmdIns.Parameters.AddWithValue("@Weight", SafeConvertToDecimal(data.formData.Weight) ?? (object)DBNull.Value);
+                            cmdIns.Parameters.AddWithValue("@Standarduom", data.formData.Standarduom ?? "");
+                            cmdIns.Parameters.AddWithValue("@Salesuom", data.formData.Salesuom ?? "");
+                            cmdIns.Parameters.AddWithValue("@Purchaseuom", data.formData.Purchaseuom ?? "");
+                            cmdIns.Parameters.AddWithValue("@Remarks", data.formData.Remarks ?? "");
+                            cmdIns.Parameters.AddWithValue("@Serialized", data.formData.Serialized ?? "0");
+                            cmdIns.Parameters.AddWithValue("@Agecategory", data.formData.Agecategory ?? "");
+                            cmdIns.Parameters.AddWithValue("@Hscode", data.formData.Hscode ?? "");
+                            cmdIns.Parameters.AddWithValue("@Country_orgin", data.formData.Country_orgin ?? "");
+                            cmdIns.Parameters.AddWithValue("@Short_description", data.formData.Short_description ?? "");
+                            cmdIns.Parameters.AddWithValue("@Brandid", data.formData.Brandid ?? "");
+
+                            double lengthCm = (double)(SafeConvertToDecimal(data.formData.Length) ?? 0);
+                            double widthCm = (double)(SafeConvertToDecimal(data.formData.Width) ?? 0);
+                            double heightCm = (double)(SafeConvertToDecimal(data.formData.Height) ?? 0);
+                            double cbm = (lengthCm / 100.0) * (widthCm / 100.0) * (heightCm / 100.0);
+                            cmdIns.Parameters.AddWithValue("@CBM", cbm);
+
+                            cmdIns.Parameters.AddWithValue("@Query", 1);
+                            var outId = new SqlParameter("@id1", SqlDbType.Int) { Direction = ParameterDirection.Output };
+                            cmdIns.Parameters.Add(outId);
+                            cmdIns.ExecuteNonQuery();
+
+                            if (outId.Value != null && outId.Value != DBNull.Value)
+                            {
+                                data.formData.id = Convert.ToInt32(outId.Value);
+                                isNewVariant = false;
+                            }
+                        }
+                    }
+
                     // Step 0: Directly update the MAIN variant record if it's an update (id > 0)
                     if (!isNewVariant)
                     {
+                        // Remove any previously created duplicate parent rows for the same item (older save logic inserted one parent per attribute).
+                        // Keep only the current parent (data.formData.id).
+                        using (var cleanupParents = new SqlCommand(
+                            @"UPDATE Tbl_Productvariants
+                              SET Isdelete = 1
+                              WHERE Isdelete = 0
+                                AND Productid = @Productid
+                                AND Itemname = @Itemname
+                                AND ISNULL(Modelno,'') = ISNULL(@Modelno,'')
+                                AND ISNULL(Batchno,'') = ISNULL(@Batchno,'')
+                                AND ISNULL(EANBarcodeno,'') = ISNULL(@EANBarcodeno,'')
+                                AND (Parentid = 0 OR Parentid IS NULL)
+                                AND Id <> @KeepId", con))
+                        {
+                            cleanupParents.Parameters.AddWithValue("@Productid", data.formData.productid ?? "");
+                            cleanupParents.Parameters.AddWithValue("@Itemname", data.formData.Itemname ?? "");
+                            cleanupParents.Parameters.AddWithValue("@Modelno", data.formData.modelno ?? "");
+                            cleanupParents.Parameters.AddWithValue("@Batchno", data.formData.batchno ?? "");
+                            cleanupParents.Parameters.AddWithValue("@EANBarcodeno", data.formData.barcodeno ?? "");
+                            cleanupParents.Parameters.AddWithValue("@KeepId", data.formData.id);
+                            cleanupParents.ExecuteNonQuery();
+                        }
+
+                        // Do NOT delete children on each update. We update existing child rows in-place
+                        // and only soft-delete child rows that were removed from the UI.
+
                         using (SqlCommand cmdMain = new SqlCommand("Sp_Productvariants", con))
                         {
                             cmdMain.CommandType = CommandType.StoredProcedure;
@@ -3048,6 +3251,9 @@ WHERE Variantorset = N'Set'
                             cmdMain.Parameters.AddWithValue("@Userid", ""); // Optional during update
                             cmdMain.Parameters.AddWithValue("@Productid", data.formData.productid ?? "");
                             cmdMain.Parameters.AddWithValue("@Productname", data.formData.productname ?? "");
+                            // Store the first attribute on the parent row for easier viewing.
+                            cmdMain.Parameters.AddWithValue("@Varianttype", string.IsNullOrWhiteSpace(parentVariantType) ? (object)DBNull.Value : parentVariantType);
+                            cmdMain.Parameters.AddWithValue("@Value", string.IsNullOrWhiteSpace(parentVariantValue) ? (object)DBNull.Value : parentVariantValue);
                             cmdMain.Parameters.AddWithValue("@Modelno", data.formData.modelno ?? "");
                             cmdMain.Parameters.AddWithValue("@Warehousecheck", data.formData.Warehousecheck ?? "0");
                             cmdMain.Parameters.AddWithValue("@Batchno", data.formData.batchno ?? "");
@@ -3088,8 +3294,35 @@ WHERE Variantorset = N'Set'
                         }
                     }
 
-                    // Step 1: Update/Insert Attributes (Child Rows)
-                    // React UI sends column_0 = main variant id for every row; in DB each attribute is a separate child row (Parentid = mainId).
+                    // Step 1: Upsert Attributes (Child Rows) WITHOUT creating duplicates
+                    // - Update existing child row by (Parentid, Varianttype) even if it was previously soft-deleted.
+                    // - Insert only if this Varianttype did not exist before.
+                    // - Soft-delete child rows that are no longer present in the UI.
+
+                    var mainIdStr = data.formData.id.ToString();
+                    var existingChildrenByType = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    using (var loadChildren = new SqlCommand(
+                        @"SELECT Id, Varianttype
+                          FROM Tbl_Productvariants
+                          WHERE Parentid = @Parentid
+                          ORDER BY Id ASC", con))
+                    {
+                        loadChildren.Parameters.AddWithValue("@Parentid", mainIdStr);
+                        using var r = loadChildren.ExecuteReader();
+                        while (r.Read())
+                        {
+                            var t = (r["Varianttype"]?.ToString() ?? "").Trim();
+                            if (string.IsNullOrWhiteSpace(t)) continue;
+                            if (!existingChildrenByType.ContainsKey(t))
+                                existingChildrenByType[t] = Convert.ToInt32(r["Id"]);
+                        }
+                    }
+
+                    var touchedChildIds = new HashSet<int>();
+                    var touchedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var storeFirstOnParent = !string.IsNullOrWhiteSpace(parentVariantType) && !string.IsNullOrWhiteSpace(parentVariantValue);
+                    var skippedFirstOnParent = false;
+
                     foreach (var rowData in data.tableData1)
                     {
                         string itemname = "", itemvalue = "", parentitem = "";
@@ -3101,42 +3334,37 @@ WHERE Variantorset = N'Set'
                         if (string.IsNullOrWhiteSpace(itemname) && string.IsNullOrWhiteSpace(itemvalue))
                             continue;
 
-                        string mainId = data.formData.id.ToString();
-                        bool isUpdateFlow = !isNewVariant && !string.IsNullOrWhiteSpace(mainId) && mainId != "0";
+                        var vType = itemname.Trim();
+                        var vValue = (itemvalue ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(vType)) continue;
 
-                        // Determine which record to update/insert:
-                        // - New variant: insert child rows (Parentid = mainId) after main insert sets data.formData.id
-                        // - Update variant: update existing child row by (Parentid, Varianttype). If not found, insert a new child.
-                        int? childId = null;
-                        if (isUpdateFlow)
+                        // If we store the first attribute on the parent row, do not duplicate the same attribute as a child row.
+                        // Example: parent has Color=Light Brown, so we skip inserting/updating that same Color=Light Brown as a child.
+                        if (storeFirstOnParent &&
+                            !skippedFirstOnParent &&
+                            vType.Equals(parentVariantType, StringComparison.OrdinalIgnoreCase) &&
+                            vValue.Equals(parentVariantValue, StringComparison.OrdinalIgnoreCase))
                         {
-                            using (var lookup = new SqlCommand(
-                                @"SELECT TOP (1) Id
-                                  FROM Tbl_Productvariants
-                                  WHERE Isdelete = 0
-                                    AND Parentid = @Parentid
-                                    AND Varianttype = @Varianttype
-                                  ORDER BY Id ASC", con))
-                            {
-                                lookup.Parameters.AddWithValue("@Parentid", mainId);
-                                lookup.Parameters.AddWithValue("@Varianttype", itemname.Trim());
-                                var o = lookup.ExecuteScalar();
-                                if (o != null && o != DBNull.Value && int.TryParse(o.ToString(), out int cid))
-                                    childId = cid;
-                            }
+                            skippedFirstOnParent = true;
+                            touchedTypes.Add(vType); // keep it "present" so it won't be deleted by NOT IN cleanup
+                            continue;
                         }
 
-                        bool doInsertChild = !isUpdateFlow || childId == null;
+                        touchedTypes.Add(vType);
+
+                        // If we already have a child row for this Varianttype, update it; otherwise insert new.
+                        var hasExisting = existingChildrenByType.TryGetValue(vType, out var existingChildId);
+                        var doInsertChild = !hasExisting;
 
                         using (SqlCommand cmd2 = new SqlCommand("Sp_Productvariants", con))
                         {
                             cmd2.CommandType = CommandType.StoredProcedure;
-                            cmd2.Parameters.AddWithValue("@Id", doInsertChild ? "" : childId.Value.ToString());
-                            cmd2.Parameters.AddWithValue("@Userid", doInsertChild ? data.formData.userid : "");
-                            cmd2.Parameters.AddWithValue("@Productid", doInsertChild ? (data.formData.productid ?? "") : "");
-                            cmd2.Parameters.AddWithValue("@Productname", doInsertChild ? (data.formData.productname ?? "") : "");
-                            cmd2.Parameters.AddWithValue("@Varianttype", itemname.Trim());
-                            cmd2.Parameters.AddWithValue("@Value", (itemvalue ?? "").Trim());
+                            cmd2.Parameters.AddWithValue("@Id", doInsertChild ? "" : existingChildId.ToString());
+                            cmd2.Parameters.AddWithValue("@Userid", data.formData.userid ?? "");
+                            cmd2.Parameters.AddWithValue("@Productid", data.formData.productid ?? "");
+                            cmd2.Parameters.AddWithValue("@Productname", data.formData.productname ?? "");
+                            cmd2.Parameters.AddWithValue("@Varianttype", vType);
+                            cmd2.Parameters.AddWithValue("@Value", vValue);
                             cmd2.Parameters.AddWithValue("@Totalqty", DBNull.Value);
                             cmd2.Parameters.AddWithValue("@Noofqty_online", data.formData.totalqtyonline ?? "0");
                             cmd2.Parameters.AddWithValue("@Modelno", data.formData.modelno ?? "");
@@ -3148,7 +3376,7 @@ WHERE Variantorset = N'Set'
                             cmd2.Parameters.AddWithValue("@Managerapprovestatus", "0");
                             cmd2.Parameters.AddWithValue("@Warehouseapprovestatus", "0");
                             cmd2.Parameters.AddWithValue("@Accountsapprovestatus", "0");
-                            cmd2.Parameters.AddWithValue("@Parentid", mainId);
+                            cmd2.Parameters.AddWithValue("@Parentid", mainIdStr);
                             cmd2.Parameters.AddWithValue("@Ischild", 1);
                             cmd2.Parameters.AddWithValue("@Date", DateTime.Now.ToString("MMM d yyyy h:mmtt"));
                             cmd2.Parameters.AddWithValue("@Description", data.formData.Description ?? "");
@@ -3185,7 +3413,51 @@ WHERE Variantorset = N'Set'
                             cmd2.Parameters.Add(pOutId);
                             cmd2.ExecuteNonQuery();
 
-                            // If this was the first insert of a brand-new main variant, keep main id stable (handled earlier).
+                            if (!doInsertChild)
+                            {
+                                touchedChildIds.Add(existingChildId);
+                            }
+                            else if (pOutId.Value != null && pOutId.Value != DBNull.Value)
+                            {
+                                touchedChildIds.Add(Convert.ToInt32(pOutId.Value));
+                            }
+                        }
+                    }
+
+                    // Ensure we don't keep an old child row for the parent-stored attribute type.
+                    if (storeFirstOnParent)
+                    {
+                        using (var delParentDupChild = new SqlCommand(
+                            @"UPDATE Tbl_Productvariants
+                              SET Isdelete = 1
+                              WHERE Parentid = @Parentid
+                                AND Isdelete = 0
+                                AND Varianttype = @Varianttype", con))
+                        {
+                            delParentDupChild.Parameters.AddWithValue("@Parentid", mainIdStr);
+                            delParentDupChild.Parameters.AddWithValue("@Varianttype", parentVariantType);
+                            delParentDupChild.ExecuteNonQuery();
+                        }
+                    }
+
+                    // Soft-delete any child rows that are no longer present in the UI.
+                    // (This prevents old removed attributes from hanging around as active.)
+                    if (touchedTypes.Count > 0)
+                    {
+                        using (var delMissing = new SqlCommand(
+                            @"UPDATE Tbl_Productvariants
+                              SET Isdelete = 1
+                              WHERE Parentid = @Parentid
+                                AND Isdelete = 0
+                                AND Varianttype IS NOT NULL
+                                AND LTRIM(RTRIM(Varianttype)) <> ''
+                                AND Varianttype NOT IN (" + string.Join(",", touchedTypes.Select((t, i) => "@vt" + i)) + ")", con))
+                        {
+                            delMissing.Parameters.AddWithValue("@Parentid", mainIdStr);
+                            int idx = 0;
+                            foreach (var t in touchedTypes)
+                                delMissing.Parameters.AddWithValue("@vt" + (idx++), t);
+                            delMissing.ExecuteNonQuery();
                         }
                     }
 
@@ -3696,6 +3968,66 @@ WHERE Variantorset = N'Set'
             var counts = getCount();
             return Ok(new { success = true, List1 = variants, message = message, Active = counts.Active, INActive = counts.INActive, Count = counts.Count });
         }
+
+        /// <summary>
+        /// Fills Short_description, HS code, country, dimensions, and UOMs from Tbl_Productvariants.
+        /// Sp_Productvariants @Query=10 result set often omits these columns; this keeps the view modal accurate without DB script deploys.
+        /// </summary>
+        private static async Task EnrichVariantViewFieldsFromDbAsync(SqlConnection con, List<Variants> variants)
+        {
+            if (variants == null || variants.Count == 0) return;
+            var ids = variants.Select(v => v.id).Where(id => id > 0).Distinct().ToList();
+            if (ids.Count == 0) return;
+
+            using var cmd = new SqlCommand { Connection = con };
+            var paramNames = new List<string>(ids.Count);
+            for (int i = 0; i < ids.Count; i++)
+            {
+                var p = "@ev" + i;
+                paramNames.Add(p);
+                cmd.Parameters.AddWithValue(p, ids[i]);
+            }
+
+            cmd.CommandText =
+                "SELECT Id, Short_description, Hscode, Country_orgin, Length, Width, Height, Weight, Standarduom, Salesuom, Purchaseuom " +
+                "FROM Tbl_Productvariants WHERE Id IN (" + string.Join(",", paramNames) + ")";
+
+            var byId = new Dictionary<int, (string Sd, string Hs, string Co, object Len, object Wid, object Hgt, object Wgt, string Std, string Sal, string Pur)>();
+
+            using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    int id = Convert.ToInt32(reader["Id"]);
+                    string sd = reader["Short_description"] == DBNull.Value ? "" : reader["Short_description"]?.ToString() ?? "";
+                    string hs = reader["Hscode"] == DBNull.Value ? "" : reader["Hscode"]?.ToString() ?? "";
+                    string co = reader["Country_orgin"] == DBNull.Value ? "" : reader["Country_orgin"]?.ToString() ?? "";
+                    object len = reader["Length"] == DBNull.Value ? 0 : reader["Length"];
+                    object wid = reader["Width"] == DBNull.Value ? 0 : reader["Width"];
+                    object hgt = reader["Height"] == DBNull.Value ? 0 : reader["Height"];
+                    object wgt = reader["Weight"] == DBNull.Value ? 0 : reader["Weight"];
+                    string std = reader["Standarduom"] == DBNull.Value ? "" : reader["Standarduom"]?.ToString() ?? "";
+                    string sal = reader["Salesuom"] == DBNull.Value ? "" : reader["Salesuom"]?.ToString() ?? "";
+                    string pur = reader["Purchaseuom"] == DBNull.Value ? "" : reader["Purchaseuom"]?.ToString() ?? "";
+                    byId[id] = (sd, hs, co, len, wid, hgt, wgt, std, sal, pur);
+                }
+            }
+
+            foreach (var v in variants)
+            {
+                if (!byId.TryGetValue(v.id, out var row)) continue;
+                v.Short_description = row.Sd;
+                v.Hscode = row.Hs;
+                v.Country_orgin = row.Co;
+                v.Length = row.Len;
+                v.Width = row.Wid;
+                v.Height = row.Hgt;
+                v.Weight = row.Wgt;
+                v.Standarduom = row.Std;
+                v.Salesuom = row.Sal;
+                v.Purchaseuom = row.Pur;
+            }
+        }
     }
 
     public static class SqlExtensions
@@ -3721,8 +4053,6 @@ WHERE Variantorset = N'Set'
                 command.Parameters.AddWithValue(name, value);
             }
         }
-
-        private static string mapStatus(string s) => s == "1" ? "Approved" : (s == "2" ? "Rejected" : "Pending");
     }
 
     public class Gallery
@@ -3825,6 +4155,13 @@ WHERE Variantorset = N'Set'
         public string Marketplace1 { get; set; }
         public bool Status { get; set; }
         public string Link { get; set; }
+    }
+
+    public class DeleteVariantPayload
+    {
+        public string variantId { get; set; }
+        public string userid { get; set; }
+        public string productid { get; set; }
     }
 
     public class ItemData

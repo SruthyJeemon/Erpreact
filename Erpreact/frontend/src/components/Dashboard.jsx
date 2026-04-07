@@ -22,6 +22,9 @@ import ProductApprovalSection from './ProductApprovalSection';
 import ProductEditRequestSection from './ProductEditRequestSection';
 import ProductApprovalDetails from './ProductApprovalDetails';
 import ItemApprovalSection from './ItemApprovalSection';
+import ItemEditRequestSection from './ItemEditRequestSection';
+import ComboApprovalSection from './ComboApprovalSection';
+import ComboEditRequestSection from './ComboEditRequestSection';
 import SetApprovalSection from './SetApprovalSection';
 import SupplierSection from './SupplierSection';
 import SupplierDetailView from './SupplierDetailView';
@@ -730,6 +733,9 @@ const Dashboard = () => {
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [pendingEditCount, setPendingEditCount] = useState(0);
   const [pendingItemApprovalCount, setPendingItemApprovalCount] = useState(0);
+  const [pendingItemEditRequestCount, setPendingItemEditRequestCount] = useState(0);
+  const [pendingComboEditRequestCount, setPendingComboEditRequestCount] = useState(0);
+  const [pendingComboApprovalCount, setPendingComboApprovalCount] = useState(0);
   const [pendingSetApprovalCount, setPendingSetApprovalCount] = useState(0);
   const [pendingPurchaseCount, setPendingPurchaseCount] = useState(0);
 
@@ -792,7 +798,7 @@ const Dashboard = () => {
           .catch(err => console.error('Error fetching approval set hub counts:', err));
       }
     }
-    if (activeSection === 'approval-item-hub' || activeSection === 'dashboard') {
+    if (activeSection === 'approval-item-hub' || activeSection === 'approval-combo-hub' || activeSection === 'dashboard') {
       const currentUserId = user.Userid || user.userid || user.id || user.Id || '';
       const catalogId = user.Catelogid || user.catelogid || '';
       fetch(`${API_URL}/api/item/pending?pageSize=1&currentUserId=${currentUserId}&catelogid=${catalogId}`)
@@ -803,6 +809,34 @@ const Dashboard = () => {
           }
         })
         .catch(err => console.error("Error fetching item approval count:", err));
+
+      if (currentUserId) {
+        fetch(`${API_URL}/api/item/approvals-full?userid=${encodeURIComponent(currentUserId)}`)
+          .then((res) => res.json().then((data) => ({ res, data })))
+          .then(({ res, data }) => {
+            if (!res.ok) return;
+            setPendingItemEditRequestCount(Number(data?.itemrequestcount ?? 0) || 0);
+          })
+          .catch(err => console.error("Error fetching item edit request count:", err));
+      }
+
+      // Combo edit request pending count (for approvals hub card badge)
+      fetch(`${API_URL}/api/combo/edit-requests/pending?page=1&pageSize=1&search=&catelogid=${catalogId}`)
+        .then((res) => res.json().then((data) => ({ res, data })))
+        .then(({ res, data }) => {
+          if (!res.ok) return;
+          setPendingComboEditRequestCount(Number(data?.totalCount ?? 0) || 0);
+        })
+        .catch(err => console.error("Error fetching combo edit request count:", err));
+
+      // Combo approvals pending count (for approvals hub card badge)
+      fetch(`${API_URL}/api/combo/pending?page=1&pageSize=1&search=&catelogid=${catalogId}`)
+        .then((res) => res.json().then((data) => ({ res, data })))
+        .then(({ res, data }) => {
+          if (!res.ok) return;
+          setPendingComboApprovalCount(Number(data?.totalCount ?? 0) || 0);
+        })
+        .catch(err => console.error("Error fetching combo approval count:", err));
     }
 
     if (activeSection === 'purchase-approval-hub' || activeSection === 'purchase-warehouse-hub' || activeSection === 'Purchase/Warehouse' || activeSection === 'purchase/warehouse') {
@@ -1180,6 +1214,9 @@ const Dashboard = () => {
             } else if (normalizedMod === 'approvals' && (normalizedSM === 'items' || normalizedSM === 'item')) {
               adminSectionId = 'approval-item-hub';
               foundMapping = true;
+            } else if (normalizedMod === 'approvals' && (normalizedSM === 'combo' || normalizedSM === 'combos' || normalizedSM.includes('combo'))) {
+              adminSectionId = 'approval-combo-hub';
+              foundMapping = true;
             } else if (normalizedMod === 'approvals' && (normalizedSM.includes('sales return') || normalizedSM.includes('salesreturn'))) {
               adminSectionId = 'approval-sales-return-hub';
               foundMapping = true;
@@ -1225,9 +1262,10 @@ const Dashboard = () => {
             // Get icon using the centralized icon mapping function
             const submenuIcon = getIconForMenu(smName, 'submodule');
 
-            // Override label for Approvals -> Items to 'Approval-Items' as requested
+            // Override labels for Approvals hubs
             let displayLabel = smName;
             if (adminSectionId === 'approval-item-hub') displayLabel = 'Approval-Items';
+            if (adminSectionId === 'approval-combo-hub') displayLabel = 'Approval-Combo';
             if (adminSectionId === 'inventory-pickupnotification') displayLabel = 'Pickup Notification';
 
             return {
@@ -1497,6 +1535,18 @@ const Dashboard = () => {
               id: 'approval-set-hub',
               label: 'Approval Set',
               icon: getIconForMenu('Approval Set Hub', 'submodule')
+            });
+          }
+
+          // Approval Combo hub (Managers only) — combo approvals + combo edit requests
+          const hasApprovalComboHub = approvalsModule.submenus.some(sm =>
+            sm.id === 'approval-combo-hub' || (sm.label || '').toLowerCase().replace(/\s/g, '').includes('approvalcombo')
+          );
+          if (rlMgr.includes('manager') && !hasApprovalComboHub) {
+            approvalsModule.submenus.push({
+              id: 'approval-combo-hub',
+              label: 'Approval-Combo',
+              icon: getIconForMenu('Combo', 'submodule')
             });
           }
         }
@@ -2763,23 +2813,64 @@ const Dashboard = () => {
                   <div className="hub-arrow">→</div>
                 </div>
 
-                <div className="hub-card-modern" onClick={() => { }} style={{ opacity: 0.8 }}>
+                <div className="hub-card-modern" onClick={() => { setActiveSection('approval-item-edit-requests'); navigate('/approval-item-edit-requests'); }} >
                   <div className="hub-icon-wrap" style={{ background: '#eff6ff', color: '#3b82f6' }}>
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                   </div>
                   <div className="hub-content">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h3>Item Edit Requests</h3>
-                      <span style={{
-                        background: '#64748b',
-                        color: '#fff',
-                        padding: '2px 10px',
-                        borderRadius: '12px',
-                        fontSize: '11px',
-                        fontWeight: '700'
-                      }}>Coming Soon</span>
+                      {pendingItemEditRequestCount > 0 && (
+                        <span className="pending-badge-modern" style={{ background: '#3b82f6' }}>{pendingItemEditRequestCount} Pending</span>
+                      )}
                     </div>
                     <p>Item modification requests and warehouse entry updates.</p>
+                  </div>
+                  <div className="hub-arrow">→</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'approval-combo-hub' && (
+          <div className="admin-page-container">
+            <div className="settings-section">
+              <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IconSVG name="approvals" size={24} />
+                Approval-Combo Module
+              </h2>
+              <p className="section-description">Manage combo creation approvals and combo edit requests.</p>
+
+              <div className="approval-hub-grid">
+                <div className="hub-card-modern" onClick={() => { setActiveSection('approval-combo-approvals'); navigate('/approval-combo-approvals'); }}>
+                  <div className="hub-icon-wrap" style={{ background: '#ecfdf5', color: '#10b981' }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  </div>
+                  <div className="hub-content">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Combo Approvals</h3>
+                      {pendingComboApprovalCount > 0 && (
+                        <span className="pending-badge-modern">{pendingComboApprovalCount} Pending</span>
+                      )}
+                    </div>
+                    <p>Review and approve/reject new combo sets.</p>
+                  </div>
+                  <div className="hub-arrow">→</div>
+                </div>
+
+                <div className="hub-card-modern" onClick={() => { setActiveSection('approval-combo-edit-requests'); navigate('/approval-combo-edit-requests'); }}>
+                  <div className="hub-icon-wrap" style={{ background: '#eff6ff', color: '#3b82f6' }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                  </div>
+                  <div className="hub-content">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Combo Edit Requests</h3>
+                      {pendingComboEditRequestCount > 0 && (
+                        <span className="pending-badge-modern" style={{ background: '#3b82f6' }}>{pendingComboEditRequestCount} Pending</span>
+                      )}
+                    </div>
+                    <p>Review and approve/reject combo edit requests.</p>
                   </div>
                   <div className="hub-arrow">→</div>
                 </div>
@@ -2791,6 +2882,24 @@ const Dashboard = () => {
         {activeSection === 'approval-item-request' && (
           <div className="admin-page-container">
             <ItemApprovalSection onNavigate={() => { setActiveSection('approval-item-hub'); navigate('/approval-item-hub'); }} />
+          </div>
+        )}
+
+        {activeSection === 'approval-item-edit-requests' && (
+          <div className="admin-page-container">
+            <ItemEditRequestSection onNavigate={() => { setActiveSection('approval-item-hub'); navigate('/approval-item-hub'); }} />
+          </div>
+        )}
+
+        {activeSection === 'approval-combo-approvals' && (
+          <div className="admin-page-container">
+            <ComboApprovalSection onNavigate={() => { setActiveSection('approval-combo-hub'); navigate('/approval-combo-hub'); }} />
+          </div>
+        )}
+
+        {activeSection === 'approval-combo-edit-requests' && (
+          <div className="admin-page-container">
+            <ComboEditRequestSection onNavigate={() => { setActiveSection('approval-combo-hub'); navigate('/approval-combo-hub'); }} />
           </div>
         )}
 

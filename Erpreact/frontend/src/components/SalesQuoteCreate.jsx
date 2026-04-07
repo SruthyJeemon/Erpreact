@@ -135,11 +135,11 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 setTermsList(Array.isArray(termsData) ? termsData : (termsData?.data || termsData?.Data || []));
             }
 
-            // Fetch Sales Persons (Using users endpoint as fallback)
-            const usersRes = await fetch(`${API_URL}/api/debug/users`);
+            // Fetch Sales Persons from the dedicated endpoint
+            const usersRes = await fetch(`${API_URL}/api/salesperson`);
             if (usersRes.ok) {
                 const usersData = await usersRes.json();
-                setSalesPersons(Array.isArray(usersData) ? usersData : []);
+                setSalesPersons(Array.isArray(usersData) ? usersData : (usersData?.data || usersData?.Data || []));
             }
 
         } catch (error) {
@@ -540,20 +540,21 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 <Paper elevation={0} sx={{ p: 4, mb: 4, bgcolor: 'white', borderRadius: 3, border: '1px solid #e2e8f0' }}>
                     <Grid container spacing={3}>
                         {/* Row 1 */}
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid item xs={12} sm={6} md={4}>
                             <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer Name</InputLabel>
                             <Autocomplete
                                 options={customers}
                                 getOptionLabel={(option) => option.Customerdisplayname || option.customerdisplayname || ''}
                                 isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
+                                value={customers.find(c => (c.Id || c.id) === billData.customerId) || null}
                                 onInputChange={(e, val) => fetchCustomers(val)}
                                 onChange={handleCustomerChange}
-                                renderInput={(params) => <TextField {...params} size="small" placeholder="Search..." sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />}
+                                renderInput={(params) => <TextField {...params} size="small" placeholder="Search..." sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px', width: '100% !important' } }} />}
                             />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid item xs={12} sm={6} md={4}>
                             <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer Email</InputLabel>
-                            <TextField fullWidth name="customerEmail" value={billData.customerEmail} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                            <TextField fullWidth name="customerEmail" value={billData.customerEmail || ''} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
                         </Grid>
                         <Grid item xs={12} sm={6} md={2}>
                             <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Terms</InputLabel>
@@ -608,8 +609,8 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                             <Select fullWidth name="salesPersonName" value={billData.salesPersonName} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', borderRadius: '12px' }}>
                                 <MenuItem value="Select">Select</MenuItem>
                                 {salesPersons.map(sp => (
-                                    <MenuItem key={sp.Userid || sp.userid} value={sp.Firstname || sp.Email}>
-                                        {sp.Firstname ? `${sp.Firstname} ${sp.Lastname || ''}` : sp.Email}
+                                    <MenuItem key={sp.Id || sp.id} value={sp.Salesperson || sp.SalesPerson || sp.Name}>
+                                        {sp.Salesperson || sp.SalesPerson || sp.Name}
                                     </MenuItem>
                                 ))}
                             </Select>

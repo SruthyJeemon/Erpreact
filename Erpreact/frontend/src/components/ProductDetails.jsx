@@ -81,6 +81,12 @@ import './ProductDetails.css';
 
 const ProductDetails = () => {
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const bumpSwalAboveMui = () => {
+        // Ensure SweetAlert overlays Material-UI dialogs/drawers.
+        document.querySelectorAll('.swal2-container').forEach((el) => {
+            el.style.setProperty('z-index', '20000', 'important');
+        });
+    };
     const { productId: paramId } = useParams();
     const location = useLocation();
     const navigate = useNavigate();
@@ -695,6 +701,159 @@ const ProductDetails = () => {
         }
     };
 
+    const handleDeleteVariantClick = async (variant) => {
+        try {
+            if (!variant) return;
+
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+            const user = userStr ? JSON.parse(userStr) : {};
+            const userid = String(user.Userid || user.userid || user.id || user.Id || '');
+
+            const variantId = variant.id || variant.Id;
+            const productid = variant.productid || variant.Productid || productId;
+
+            const mgr = (variant.managerStatus || variant.ManagerStatus || '').toString().toLowerCase().trim();
+            const isPending = !mgr || mgr === 'pending' || mgr === '0';
+            const isApprovedOrRejected = mgr === 'approved' || mgr === 'rejected' || mgr === '1' || mgr === '2';
+
+            // If approved/rejected -> send delete request (legacy checkdeleterequestitems + Deleterequest flow)
+            if (isApprovedOrRejected) {
+                try {
+                    const currentUserId = String(user.Userid || user.userid || user.id || user.Id || '').trim();
+                    const vId = String(variantId ?? '').trim();
+                    if (currentUserId && vId) {
+                        const checkRes = await fetch(
+                            `${API_URL}/api/item/pending-delete-request?${new URLSearchParams({
+                                variantid: vId,
+                                userid: currentUserId
+                            })}`
+                        );
+                        const checkData = await checkRes.json().catch(() => ({}));
+                        if (checkRes.ok && checkData?.pending === true) {
+                            await Swal.fire({
+                                title: 'Cancelled',
+                                text: 'You already sent the delete request of this item',
+                                icon: 'error',
+                                didOpen: bumpSwalAboveMui
+                            });
+                            return;
+                        }
+                    }
+                } catch (_) {
+                    // backend still protects duplicates with 409
+                }
+
+                const r2 = await Swal.fire({
+                    title: 'Deletion is not possible. The item has already been approved or rejected. Do you still want to delete this item?',
+                    icon: 'info',
+                    input: 'text',
+                    inputLabel: 'Type YES (capital letters) to confirm',
+                    showCancelButton: true,
+                    confirmButtonText: 'Submit',
+                    cancelButtonText: 'Cancel',
+                    didOpen: bumpSwalAboveMui
+                });
+
+                if (!r2.isConfirmed || String(r2.value || '').trim() !== 'YES') {
+                    await Swal.fire({ title: 'Cancelled', text: 'Your Data is safe', icon: 'error', didOpen: bumpSwalAboveMui });
+                    return;
+                }
+
+                const reason = await Swal.fire({
+                    title: 'Reason for delete request',
+                    input: 'textarea',
+                    inputPlaceholder: 'Enter reason...',
+                    showCancelButton: true,
+                    confirmButtonText: 'Send',
+                    cancelButtonText: 'Cancel',
+                    inputValidator: (value) => (!value || !String(value).trim() ? 'Please enter a reason' : undefined),
+                    didOpen: () => {
+                        bumpSwalAboveMui();
+                        const ta = document.querySelector('.swal2-textarea');
+                        if (ta) {
+                            ta.style.pointerEvents = 'auto';
+                            ta.style.userSelect = 'text';
+                        }
+                    }
+                });
+
+                if (!reason.isConfirmed) return;
+
+                const role = String(user.Role || user.role || '').trim();
+                const payload = {
+                    Id: String(variantId),
+                    Productid: String(productid || ''),
+                    Userid: String(variant.Userid || variant.userid || ''),
+                    Commentss: String(reason.value || ''),
+                    Role: role,
+                    Approved_Role: role
+                };
+
+                const sendRes = await fetch(`${API_URL}/api/item/delete-request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const sendData = await sendRes.json().catch(() => ({}));
+                if (sendRes.ok && sendData.success !== false) {
+                    await Swal.fire({
+                        title: 'alert!',
+                        text: sendData.message || 'Delete request sent. Wait for manager approval',
+                        icon: 'success',
+                        didOpen: bumpSwalAboveMui
+                    });
+                } else if (sendRes.status === 409) {
+                    await Swal.fire({
+                        title: 'Cancelled',
+                        text: sendData.message || 'You already sent the delete request of this item',
+                        icon: 'error',
+                        didOpen: bumpSwalAboveMui
+                    });
+                } else {
+                    await Swal.fire({
+                        title: 'Error',
+                        text: sendData.message || 'Request failed.',
+                        icon: 'error',
+                        didOpen: bumpSwalAboveMui
+                    });
+                }
+                return;
+            }
+
+            const r1 = await Swal.fire({
+                title: `Do you want to delete the product Variant "${variant.Itemname || variant.itemname || variant.productname || variant.Productname || 'this item'}"?`,
+                icon: 'info',
+                input: 'text',
+                inputLabel: 'Type YES (capital letters) to confirm',
+                showCancelButton: true,
+                confirmButtonText: 'Submit',
+                cancelButtonText: 'Cancel',
+                didOpen: bumpSwalAboveMui
+            });
+
+            if (!r1.isConfirmed || String(r1.value || '').trim() !== 'YES') {
+                await Swal.fire({ title: 'Cancelled', text: 'You cancelled', icon: 'error', didOpen: bumpSwalAboveMui });
+                return;
+            }
+
+            const res = await fetch(`${API_URL}/api/product/variants/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ variantId: String(variantId), userid, productid: String(productid) })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success !== false) {
+                setVariants(prev => prev.filter(v => String(v.id || v.Id) !== String(variantId)));
+                await Swal.fire({ title: 'Alert!', text: data.message || 'Deleted successfully', icon: 'success', didOpen: bumpSwalAboveMui });
+            } else {
+                await Swal.fire({ title: 'Error', text: data.message || 'Delete failed.', icon: 'error', didOpen: bumpSwalAboveMui });
+            }
+        } catch (e) {
+            await Swal.fire({ title: 'Error', text: String(e?.message || e), icon: 'error', didOpen: bumpSwalAboveMui });
+        }
+    };
+
     const paginate = (items) => {
         const indexOfLastEntry = currentPage * entriesPerPage;
         const indexOfFirstEntry = indexOfLastEntry - entriesPerPage;
@@ -855,7 +1014,8 @@ const ProductDetails = () => {
                 return {
                     id: img.id || `existing-${index}-${Date.now()}`,
                     file: null,
-                    preview: getImageUrl(pathStr, 'Resize'),
+                    // Many uploads only have Thumb path in DB; Resize may not exist.
+                    preview: getImageUrl(pathStr, 'Thumb'),
                     type: img.type || (pathStr.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) ? 'video' : 'image'),
                     name: pathStr.toString().split('/').pop() || (img.type === 'video' ? `Video ${index + 1}` : `Image ${index + 1}`)
                 };
@@ -871,7 +1031,8 @@ const ProductDetails = () => {
                     return {
                         id: `existing-${index}-${Date.now()}`,
                         file: null,
-                        preview: getImageUrl(pathStr, 'Resize'),
+                        // Many uploads only have Thumb path in DB; Resize may not exist.
+                        preview: getImageUrl(pathStr, 'Thumb'),
                         type: isVideo ? 'video' : 'image',
                         name: pathStr.toString().split('/').pop() || (isVideo ? `Video ${index + 1}` : `Image ${index + 1}`)
                     };
@@ -892,14 +1053,20 @@ const ProductDetails = () => {
         if (sourceMarketplaces && Array.isArray(sourceMarketplaces)) {
             mappedMarketplaces = mappedMarketplaces.map(defaultMp => {
                 const foundMp = sourceMarketplaces.find(m => {
-                    const marketplaceName = (m.Marketplacename || m.marketplacename || m.MarketplaceName || m.Marketplace1 || m.Marketplace || m.name || m.Marketplace_name || '').toLowerCase();
+                    const marketplaceName = (m.Marketplacename || m.marketplacename || m.MarketplaceName || m.Marketplace1 || m.marketplace1 || m.Marketplace || m.name || m.Marketplace_name || '').toLowerCase();
                     return marketplaceName.includes(defaultMp.name.toLowerCase());
                 });
                 if (foundMp) {
+                    const link = (foundMp.Link || foundMp.link || '').toString();
+                    const isSelected =
+                        foundMp.Visibility == 1 || foundMp.visibility == 1 || foundMp.Visibility === '1' ||
+                        foundMp.Status === true || foundMp.status === true ||
+                        (typeof foundMp.Status === 'string' && foundMp.Status.toLowerCase() === 'active') ||
+                        !!link.trim();
                     return {
                         ...defaultMp,
-                        selected: (foundMp.Visibility == 1 || foundMp.visibility == 1 || foundMp.Visibility === '1' || (foundMp.Status || '').toLowerCase() === 'active' || !!(foundMp.Link || foundMp.link)),
-                        link: foundMp.Link || foundMp.link || ''
+                        selected: isSelected,
+                        link
                     };
                 }
                 return defaultMp;
@@ -1003,12 +1170,142 @@ const ProductDetails = () => {
         setShowAddVariantModal(true);
     };
 
+    const handleEditVariantClickFromViewModal = async () => {
+        if (!selectedVariant) return;
+
+        // If approved/rejected, send edit request (legacy Saveitemeditcomments behavior)
+        const mgr = (selectedVariant.managerStatus || selectedVariant.ManagerStatus || '').toString().toLowerCase().trim();
+        const isApprovedOrRejected = mgr === 'approved' || mgr === 'rejected';
+
+        if (isApprovedOrRejected) {
+            // If a pending edit request already exists, warn and stop.
+            try {
+                const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+                const u = userStr ? JSON.parse(userStr) : {};
+                const currentUserId = String(u.Userid || u.userid || u.id || u.Id || '').trim();
+                const variantId = String(selectedVariant.id || selectedVariant.Id || '').trim();
+                if (currentUserId && variantId) {
+                    const checkRes = await fetch(
+                        `${API_URL}/api/item/pending-edit-request?${new URLSearchParams({
+                            variantid: variantId,
+                            userid: currentUserId
+                        })}`
+                    );
+                    const checkData = await checkRes.json().catch(() => ({}));
+                    if (checkRes.ok && checkData?.pending === true) {
+                        await Swal.fire({
+                            title: 'Edit request already sent',
+                            text: 'You have already sent an edit request for this item. Please wait for manager approval.',
+                            icon: 'info',
+                            didOpen: bumpSwalAboveMui
+                        });
+                        return;
+                    }
+                }
+            } catch (_) {
+                // If check fails, allow the user to continue; backend still protects duplicates with 409.
+            }
+
+            const r = await Swal.fire({
+                title: 'Updating is not possible. Already approved or rejected the item. Do you want to send edit request again?',
+                icon: 'info',
+                showCancelButton: true,
+                confirmButtonText: 'Yes',
+                cancelButtonText: 'Cancel',
+                didOpen: bumpSwalAboveMui
+            });
+
+            if (!r.isConfirmed) {
+                await Swal.fire({ title: 'Cancelled', text: 'Your Data is safe', icon: 'error', didOpen: bumpSwalAboveMui });
+                return;
+            }
+
+            const reason = await Swal.fire({
+                title: 'Reason for edit request',
+                input: 'textarea',
+                inputPlaceholder: 'Enter reason...',
+                inputAttributes: { autocapitalize: 'off', autocomplete: 'off' },
+                showCancelButton: true,
+                confirmButtonText: 'Send',
+                cancelButtonText: 'Cancel',
+                inputValidator: (value) => (!value || !String(value).trim() ? 'Please enter a reason' : undefined),
+                didOpen: () => {
+                    bumpSwalAboveMui();
+                    // Ensure textarea stays interactive even above focus-trapped dialogs.
+                    const ta = document.querySelector('.swal2-textarea');
+                    if (ta) {
+                        ta.style.pointerEvents = 'auto';
+                        ta.style.userSelect = 'text';
+                    }
+                }
+            });
+
+            if (!reason.isConfirmed) return;
+
+            const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+            const user = userStr ? JSON.parse(userStr) : {};
+            const role = user.role || user.Role || '';
+
+            const payload = {
+                Id: String(selectedVariant.id || selectedVariant.Id || ''),
+                Productid: String(selectedVariant.productid || selectedVariant.Productid || productId || ''),
+                Userid: String(selectedVariant.Userid || selectedVariant.userid || ''),
+                Commentss: String(reason.value || ''),
+                Role: String(role || '')
+            };
+
+            const res = await fetch(`${API_URL}/api/item/edit-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.success !== false) {
+                await Swal.fire({ title: 'Alert!', text: data.message || 'Edit request sent. Wait for manager approval', icon: 'success', didOpen: bumpSwalAboveMui });
+                return;
+            }
+            await Swal.fire({ title: 'Error', text: data.message || 'Request failed', icon: 'error', didOpen: bumpSwalAboveMui });
+            return;
+        }
+
+        // Pending: allow direct edit
+        await handleEditVariantFromView(selectedVariant);
+    };
+
     const handleCloseAddVariant = () => {
         setShowAddVariantModal(false);
     };
 
-    const handleViewVariant = (variant) => {
-        setSelectedVariant(variant);
+    const handleViewVariant = async (variant) => {
+        if (!variant) return;
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+        const currentVariantId = variant.id || variant.Id || variant.Productvariantsid || variant.productvariantsid;
+        if (!currentVariantId) {
+            setSelectedVariant(variant);
+            setViewVariantActiveTab('item-details');
+            setShowViewVariantModal(true);
+            return;
+        }
+
+        // Fetch latest marketplace data for this specific variant (so Pricing tab can show links)
+        let variantSpecificMarketplaces = [];
+        try {
+            const mpRes = await fetch(`${API_URL}/api/product/marketplaces/${encodeURIComponent(currentVariantId)}`);
+            if (mpRes.ok) {
+                const mpJson = await mpRes.json();
+                variantSpecificMarketplaces = Array.isArray(mpJson) ? mpJson : (mpJson.data || mpJson.Data || []);
+            }
+        } catch (err) {
+            console.error("Error fetching variant marketplaces:", err);
+        }
+
+        setSelectedVariant({
+            ...variant,
+            Marketplaces:
+                (Array.isArray(variantSpecificMarketplaces) && variantSpecificMarketplaces.length > 0)
+                    ? variantSpecificMarketplaces
+                    : (variant.Marketplaces || variant.marketplaces || variant.MarketplaceData || variant.marketPlaceData || variant.Marketplace_links || variant.marketplace_links || [])
+        });
         setViewVariantActiveTab('item-details');
         setShowViewVariantModal(true);
     };
@@ -1585,20 +1882,38 @@ const ProductDetails = () => {
         if (!path) return 'https://picsum.photos/400/300?text=No+Image';
         const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
 
-        // If it's already a full URL, return it
-        if (path.startsWith('http')) return path;
+        // If it's already a full URL, return it (but still safe for spaces)
+        if (path.startsWith('http')) return encodeURI(path);
 
-        // The path in DB is /Content/images/{productId}/Thumb/{name}
-        // We can replace /Thumb/ with /Resize/ or /Original/ (if it follows that pattern)
+        // The path in DB is usually /Content/images/{productId}/{Thumb|Resize|Orginal}/{name}
+        // Note: backend folder is spelled "Orginal" (not "Original").
         let finalPath = path;
-        if (path.includes('/Thumb/')) {
-            if (size === 'Original' || size === 'Resize') {
-                finalPath = path.replace('/Thumb/', `/${size}/`);
-            }
+        if (size === 'Original') {
+            if (finalPath.includes('/Thumb/')) finalPath = finalPath.replace('/Thumb/', '/Orginal/');
+            else if (finalPath.includes('/Resize/')) finalPath = finalPath.replace('/Resize/', '/Orginal/');
+        } else if (size === 'Resize') {
+            if (finalPath.includes('/Thumb/')) finalPath = finalPath.replace('/Thumb/', '/Resize/');
+            // If finalPath is already Orginal, keep it as-is (Resize may not exist for videos)
+        } else if (size === 'Thumb') {
+            // If finalPath is Orginal/Resize and caller wants Thumb, try to map back.
+            if (finalPath.includes('/Orginal/')) finalPath = finalPath.replace('/Orginal/', '/Thumb/');
+            else if (finalPath.includes('/Resize/')) finalPath = finalPath.replace('/Resize/', '/Thumb/');
         }
 
         // Ensure path starts with /
         if (!finalPath.startsWith('/')) finalPath = '/' + finalPath;
+
+        // Important: filenames can contain spaces/special chars; encode only the last segment.
+        const parts = finalPath.split('/');
+        const lastIdx = parts.length - 1;
+        if (lastIdx >= 0 && parts[lastIdx]) {
+            try {
+                parts[lastIdx] = encodeURIComponent(decodeURIComponent(parts[lastIdx]));
+            } catch {
+                parts[lastIdx] = encodeURIComponent(parts[lastIdx]);
+            }
+        }
+        finalPath = parts.join('/');
 
         return `${API_URL}${finalPath}`;
     };
@@ -3182,7 +3497,7 @@ const ProductDetails = () => {
                                                     </Grid>
                                                     <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
                                                         <Button size="small" startIcon={<VisibilityIcon />} onClick={() => handleViewVariant(v)} sx={{ textTransform: 'none', fontWeight: 700 }}>Details</Button>
-                                                        <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2' }}><DeleteIcon fontSize="small" /></IconButton>
+                                                        <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2' }} onClick={() => void handleDeleteVariantClick(v)}><DeleteIcon fontSize="small" /></IconButton>
                                                     </Box>
                                                 </Paper>
                                             ))}
@@ -3247,10 +3562,7 @@ const ProductDetails = () => {
                                                                     <IconButton size="small" onClick={() => handleViewVariant(v)} sx={{ color: '#2563eb', bgcolor: '#eff6ff', borderRadius: '10px' }}>
                                                                         <VisibilityIcon fontSize="small" />
                                                                     </IconButton>
-                                                                    <IconButton size="small" onClick={() => handleEditVariantFromView(v)} sx={{ color: '#fbbf24', bgcolor: '#fffbeb', borderRadius: '10px' }}>
-                                                                        <EditIcon fontSize="small" />
-                                                                    </IconButton>
-                                                                    <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2', borderRadius: '10px' }}>
+                                                                    <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2', borderRadius: '10px' }} onClick={() => void handleDeleteVariantClick(v)}>
                                                                         <DeleteIcon fontSize="small" />
                                                                     </IconButton>
                                                                 </Stack>
@@ -3717,7 +4029,7 @@ const ProductDetails = () => {
                                                             <TableCell align="center">
                                                                 <Stack direction="row" spacing={1} justifyContent="center">
                                                                     <IconButton size="small" sx={{ color: '#2563eb', bgcolor: '#eff6ff', borderRadius: '10px' }}><EditIcon fontSize="small" /></IconButton>
-                                                                    <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2', borderRadius: '10px' }}><DeleteIcon fontSize="small" /></IconButton>
+                                                                    <IconButton size="small" sx={{ color: '#ef4444', bgcolor: '#fef2f2', borderRadius: '10px' }} onClick={() => void handleDeleteVariantClick(v)}><DeleteIcon fontSize="small" /></IconButton>
                                                                 </Stack>
                                                             </TableCell>
                                                         </TableRow>
@@ -5513,6 +5825,8 @@ const ProductDetails = () => {
                             onClose={(event, reason) => { if (reason !== 'backdropClick' && reason !== 'escapeKeyDown') { setShowViewVariantModal(false) } }}
                             maxWidth="md"
                             fullWidth
+                            disableEnforceFocus
+                            disableRestoreFocus
                             PaperProps={{
                                 sx: {
                                     borderRadius: '16px',
@@ -5669,15 +5983,29 @@ const ProductDetails = () => {
                                                                     <div className="media-section-group">
                                                                         <h6 className="media-group-title" style={{ fontSize: '13px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '10px' }}>Item Specific Media</h6>
                                                                         <div className="media-grid-preview">
-                                                                            {displayImages.map((src, i) => (
-                                                                                <div key={`spec-${i}`} className="media-item-wrapper">
-                                                                                    <img
-                                                                                        src={(src.startsWith('http') ? src : `${import.meta.env.VITE_API_URL || 'http://localhost:5023'}${src.startsWith('/') ? '' : '/'}${src}`).replace('/Thumb/', '/Resize/')}
-                                                                                        alt={`item-${i}`}
-                                                                                        className="media-thumbnail-view"
-                                                                                    />
-                                                                                </div>
-                                                                            ))}
+                                                                            {displayImages.map((src, i) => {
+                                                                                const raw = typeof src === 'string' ? src : '';
+                                                                                const isVideo = /\.(mp4|webm|ogg|mov)$/i.test(raw);
+                                                                                const mediaUrl = getImageUrl(raw, isVideo ? 'Original' : 'Thumb');
+                                                                                return (
+                                                                                    <div key={`spec-${i}`} className="media-item-wrapper">
+                                                                                        {isVideo ? (
+                                                                                            <video
+                                                                                                src={mediaUrl}
+                                                                                                className="media-thumbnail-view"
+                                                                                                controls
+                                                                                                preload="metadata"
+                                                                                            />
+                                                                                        ) : (
+                                                                                            <img
+                                                                                                src={mediaUrl}
+                                                                                                alt={`item-${i}`}
+                                                                                                className="media-thumbnail-view"
+                                                                                            />
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })}
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -5798,12 +6126,23 @@ const ProductDetails = () => {
 
                                                 <h5 className="section-subtitle-modern" style={{ marginTop: '2rem', marginBottom: '1rem' }}>Marketplace Links</h5>
                                                 <div className="marketplaces-list-view">
-                                                    {(selectedVariant.Marketplaces || selectedVariant.marketplaces || selectedVariant.MarketplaceData || selectedVariant.marketPlaceData || selectedVariant.Marketplace_links || selectedVariant.marketplace_links) ? (
-                                                        Array.isArray(selectedVariant.Marketplaces || selectedVariant.marketplaces || selectedVariant.MarketplaceData || selectedVariant.marketPlaceData || selectedVariant.Marketplace_links || selectedVariant.marketplace_links) ? (selectedVariant.Marketplaces || selectedVariant.marketplaces || selectedVariant.MarketplaceData || selectedVariant.marketPlaceData || selectedVariant.Marketplace_links || selectedVariant.marketplace_links).map((mp, i) => (
+                                                    {(() => {
+                                                        const mpList = (selectedVariant.Marketplaces || selectedVariant.marketplaces || selectedVariant.MarketplaceData || selectedVariant.marketPlaceData || selectedVariant.Marketplace_links || selectedVariant.marketplace_links);
+                                                        const arr = Array.isArray(mpList) ? mpList : [];
+                                                        if (!arr || arr.length === 0) {
+                                                            return (
+                                                                <div style={{ padding: '10px', background: '#f0f9ff', borderRadius: '6px', color: '#0369a1', fontSize: '13px' }}>
+                                                                    No marketplace links added to this item.
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return arr.map((mp, i) => (
                                                             <div key={i} className="marketplace-item-view" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 15px', background: '#f8fafc', borderRadius: '8px', marginBottom: '8px', border: '1px solid #e2e8f0' }}>
-                                                                <span style={{ fontWeight: '600' }}>{mp.Marketplacename || mp.marketplacename || mp.MarketplaceName || mp.Marketplace || mp.name || mp.Marketplace1}</span>
-                                                                {(mp.Link || mp.link) ? (
-                                                                    <a href={mp.Link || mp.link} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                                <span style={{ fontWeight: '600' }}>
+                                                                    {mp.Marketplacename || mp.marketplacename || mp.MarketplaceName || mp.Marketplace || mp.name || mp.Marketplace1 || mp.marketplace1 || 'Marketplace'}
+                                                                </span>
+                                                                {((mp.Link || mp.link || '').toString().trim()) ? (
+                                                                    <a href={(mp.Link || mp.link || '').toString().trim()} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                                         View Link
                                                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                                                                     </a>
@@ -5811,12 +6150,8 @@ const ProductDetails = () => {
                                                                     <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>No Link</span>
                                                                 )}
                                                             </div>
-                                                        )) : <div style={{ color: '#64748b' }}>No marketplace data available</div>
-                                                    ) : (
-                                                        <div style={{ padding: '10px', background: '#f0f9ff', borderRadius: '6px', color: '#0369a1', fontSize: '13px' }}>
-                                                            No marketplace links added to this item.
-                                                        </div>
-                                                    )}
+                                                        ));
+                                                    })()}
                                                 </div>
                                             </div>
                                         )}
@@ -5911,7 +6246,7 @@ const ProductDetails = () => {
                                                 <button
                                                     type="button"
                                                     className="btn-edit-modern"
-                                                    onClick={() => handleEditVariantFromView(selectedVariant)}
+                                                    onClick={() => void handleEditVariantClickFromViewModal()}
                                                     style={{
                                                         background: '#3b82f6',
                                                         color: 'white',

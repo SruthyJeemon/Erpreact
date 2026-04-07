@@ -266,6 +266,27 @@
     /* IE and Edge */
 }
 
+/* SweetAlert2 font size tuning */
+.swal2-popup {
+    font-size: 0.9rem;
+}
+
+.swal2-title {
+    font-size: 1.1rem;
+}
+
+.swal2-html-container,
+.swal2-content,
+.swal2-input,
+.swal2-textarea {
+    font-size: 0.9rem;
+}
+
+.swal2-actions .swal2-styled {
+    font-size: 0.85rem;
+    padding: 0.45rem 0.85rem;
+}
+
 .product-details-container .tabs-container::-webkit-scrollbar {
     display: none;
     /* Chrome, Safari, Opera */

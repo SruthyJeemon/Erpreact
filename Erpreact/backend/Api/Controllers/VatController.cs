@@ -56,7 +56,7 @@ namespace Api.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { success = false, message = ex.Message });
+                return StatusCode(500, new { success = false, message = ex.Message, stack = ex.StackTrace });
             }
         }
     }

@@ -57,6 +57,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseRouting();
 app.UseCors("AllowReactApp");
 
 // Enable static file serving for uploaded images
@@ -2543,33 +2544,35 @@ app.MapGet("/api/paymentterms", async (string? isdelete, SqlConnection connectio
     {
         await connection.OpenAsync();
         
-        using var command = new SqlCommand("Sp_Paymentterms", connection)
-        {
-            CommandType = System.Data.CommandType.StoredProcedure
-        };
-        
-        command.Parameters.AddWithValue("@Id", DBNull.Value);
-        command.Parameters.AddWithValue("@Paymentterms", DBNull.Value);
+        // Use SELECT * and check column names for robustness
+        using var command = new SqlCommand("SELECT * FROM Tbl_Termsandcondition WHERE Isdelete = @Isdelete", connection);
         command.Parameters.AddWithValue("@Isdelete", (object)isdelete ?? "0");
-        command.Parameters.AddWithValue("@Query", 4); // Query = 4 for Select All
         
         using var reader = await command.ExecuteReaderAsync();
         var paymentTerms = new List<PaymentTermsData>();
         
+        var schema = reader.GetColumnSchema();
+        bool hasPaymentTermsCol = schema.Any(c => c.ColumnName.Equals("Paymentterms", StringComparison.OrdinalIgnoreCase));
+        bool hasTermsCol = schema.Any(c => c.ColumnName.Equals("Terms", StringComparison.OrdinalIgnoreCase));
+
         while (await reader.ReadAsync())
         {
+            string? termsText = null;
+            if (hasPaymentTermsCol) termsText = reader["Paymentterms"]?.ToString();
+            else if (hasTermsCol) termsText = reader["Terms"]?.ToString();
+
             paymentTerms.Add(new PaymentTermsData
             {
-                Id = reader.GetInt32(reader.GetOrdinal("Id")),
-                Paymentterms = reader.IsDBNull(reader.GetOrdinal("Paymentterms")) ? null : reader.GetString(reader.GetOrdinal("Paymentterms")),
-                Isdelete = reader.IsDBNull(reader.GetOrdinal("Isdelete")) ? null : reader.GetString(reader.GetOrdinal("Isdelete"))
+                Id = Convert.ToInt32(reader["Id"]),
+                Paymentterms = termsText,
+                Isdelete = reader["Isdelete"]?.ToString()
             });
         }
         
         response.Success = true;
         response.Message = "Payment terms retrieved successfully";
         response.PaymentTerms = paymentTerms;
-        response.Data = paymentTerms; // Also set Data for compatibility
+        response.Data = paymentTerms; 
     }
     catch (Exception ex)
     {
@@ -2587,6 +2590,34 @@ app.MapGet("/api/paymentterms", async (string? isdelete, SqlConnection connectio
     return Results.Json(response);
 })
 .WithName("GetAllPaymentTerms")
+.WithOpenApi();
+
+// Salesperson Endpoint
+app.MapGet("/api/salesperson", async (SqlConnection connection) => 
+{
+    try
+    {
+        await connection.OpenAsync();
+        using var command = new SqlCommand("SELECT Id, Salesperson FROM Tbl_Salesperson WHERE ISDELETE = 0 AND Status = 'Active'", connection);
+        using var reader = await command.ExecuteReaderAsync();
+        var list = new List<object>();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new { 
+                Id = reader["Id"], 
+                Salesperson = reader["Salesperson"] 
+            });
+        }
+        return Results.Ok(list);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error in /api/salesperson: {ex.Message}");
+        return Results.Json(new { error = ex.Message, stack = ex.StackTrace }, statusCode: 500);
+    }
+    finally { if (connection.State == ConnectionState.Open) await connection.CloseAsync(); }
+})
+.WithName("GetSalespersons")
 .WithOpenApi();
 
 // Create new payment term
@@ -7007,8 +7038,9 @@ app.MapPost("/api/product/reject/{id}", async (string id, HttpRequest request, S
 });
 
 
-// GET: Fetch Pending Items (Variants) for Approval
-app.MapGet("/api/item/pending", async (string? search, string? currentUserId, string? catelogid, int? page, int? pageSize, SqlConnection connection) =>
+// GET: Fetch Pending Items (Variants) for Approval (legacy minimal API route)
+// NOTE: Renamed to avoid ambiguous match with controller `GET /api/item/pending`.
+app.MapGet("/api/item/pending-legacy", async (string? search, string? currentUserId, string? catelogid, int? page, int? pageSize, SqlConnection connection) =>
 {
     var items = new List<dynamic>();
     int totalCount = 0;

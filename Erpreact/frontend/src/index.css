@@ -270,4 +270,23 @@ body {
 
 .swal2-container {
   z-index: 99999 !important;
+  pointer-events: auto !important;
+}
+
+.swal2-container * {
+  pointer-events: auto;
+}
+
+/* When SweetAlert is triggered above an open MUI Dialog, MUI's focus trap/backdrop
+   can make inputs feel "unclickable" unless the container is fixed and interactive. */
+.swal2-container.swal2-backdrop-show,
+.swal2-container.swal2-noanimation {
+  pointer-events: auto !important;
+}
+
+.swal2-container .swal2-popup,
+.swal2-container .swal2-textarea,
+.swal2-container .swal2-input {
+  pointer-events: auto !important;
+  user-select: text;
 }
