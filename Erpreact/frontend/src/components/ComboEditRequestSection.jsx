@@ -5,12 +5,6 @@ import {
   Typography,
   Button,
   TextField,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Paper,
   Dialog,
   DialogTitle,
@@ -31,6 +25,9 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import { DataGrid } from '@mui/x-data-grid';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 
 const ComboEditRequestSection = ({ onNavigate }) => {
   const [items, setItems] = useState([]);
@@ -46,6 +43,8 @@ const ComboEditRequestSection = ({ onNavigate }) => {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isSmall = useMediaQuery(theme.breakpoints.down('md'));
 
   const catelogid = useMemo(() => String(user.Catelogid || user.catelogid || '').trim(), [user]);
 
@@ -189,64 +188,134 @@ const ComboEditRequestSection = ({ onNavigate }) => {
           </Typography>
         </Paper>
 
-        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-          <Table sx={{ minWidth: 1000 }}>
-            <TableHead>
-              <TableRow sx={{ bgcolor: '#f1f5f9' }}>
-                <TableCell sx={{ fontWeight: 700, color: '#475569', width: '35%' }}>COMBO</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#475569', width: '40%' }}>REQUEST</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#475569', width: '15%' }}>SUBMITTED BY</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 700, color: '#475569', width: '10%' }}>ACTIONS</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={4} align="center" sx={{ py: 8 }}><CircularProgress size={30} /></TableCell></TableRow>
-              ) : items.length === 0 ? (
-                <TableRow><TableCell colSpan={4} align="center" sx={{ py: 8 }}><Typography color="textSecondary">No pending combo edit requests.</Typography></TableCell></TableRow>
-              ) : (
-                items.map((r, idx) => (
-                  <TableRow key={r.CommentId || idx} hover>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 800, color: '#0f172a' }}>
-                        {r.Comboname || r.comboname || 'N/A'}
+        <Box sx={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
+          <Paper sx={{ borderRadius: 2, overflow: 'hidden', minWidth: isSmall ? 860 : 'auto' }}>
+            <DataGrid
+              rows={(items || []).map((c, idx) => ({
+                ...c,
+                _rowKey: String(c.CommentId ?? c.commentId ?? c.Id ?? idx)
+              }))}
+              getRowId={(r) => r._rowKey}
+              columns={[
+                {
+                  field: 'combo',
+                  headerName: 'COMBO',
+                  flex: 1.25,
+                  sortable: false,
+                  renderCell: ({ row }) => (
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 900, color: '#0f172a', lineHeight: 1.2 }}>
+                        {row.Comboname || row.comboname || 'N/A'}
                       </Typography>
-                      <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: '#94a3b8' }}>
-                        Combo ID: #{r.Productcomboid || r.productcomboid} • Request ID: #{r.CommentId || r.commentId}
+                      <Typography variant="caption" sx={{ display: 'block', mt: 0.35, color: '#94a3b8' }}>
+                        Combo ID: #{row.Productcomboid || row.productcomboid} • Request ID: #{row.CommentId || row.commentId || row.Id}
                       </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ color: '#334155', whiteSpace: 'pre-wrap' }}>
-                        {String(r.Comments || r.comments || '').replace('[EDIT REQUEST]', '').trim() || '—'}
+                    </Box>
+                  )
+                },
+                {
+                  field: 'request',
+                  headerName: 'REQUEST',
+                  flex: 1.55,
+                  sortable: false,
+                  renderCell: ({ row }) => (
+                    <Box sx={{ width: '100%' }}>
+                      <Typography variant="body2" sx={{ color: '#334155', whiteSpace: 'pre-wrap', lineHeight: 1.25 }}>
+                        {String(row.Comments || row.comments || '').replace('[EDIT REQUEST]', '').trim() || '—'}
                       </Typography>
-                      <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#94a3b8' }}>
-                        {r.Checked_Date || r.checked_Date || r.checked_date || ''}
+                      {(row.Checked_Date || row.checked_Date || row.checked_date) && (
+                        <Typography variant="caption" sx={{ display: 'block', mt: 0.75, color: '#94a3b8' }}>
+                          {row.Checked_Date || row.checked_Date || row.checked_date}
+                        </Typography>
+                      )}
+                    </Box>
+                  )
+                },
+                {
+                  field: 'submittedBy',
+                  headerName: 'SUBMITTED BY',
+                  flex: 0.7,
+                  sortable: false,
+                  renderCell: ({ row }) => (
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 900, color: '#0f172a', lineHeight: 1.2 }}>
+                        {row.Username || row.username || '—'}
                       </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 700, color: '#334155' }}>{r.Username || r.username || '—'}</Typography>
-                      <Typography variant="caption" sx={{ color: '#94a3b8' }}>{r.Userid || r.userid || ''}</Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Stack direction="row" spacing={1} justifyContent="center">
-                        <Tooltip title="Approve">
-                          <IconButton onClick={() => openModal(r, '1')} sx={{ bgcolor: '#ecfdf5', border: '1px solid #bbf7d0', '&:hover': { bgcolor: '#dcfce7' } }}>
-                            <CheckCircleIcon sx={{ color: '#16a34a' }} />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Reject">
-                          <IconButton onClick={() => openModal(r, '2')} sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', '&:hover': { bgcolor: '#fee2e2' } }}>
-                            <CancelIcon sx={{ color: '#ef4444' }} />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                      <Typography variant="caption" sx={{ color: '#94a3b8', wordBreak: 'break-all' }}>
+                        {row.Userid || row.userid || ''}
+                      </Typography>
+                    </Box>
+                  )
+                },
+                {
+                  field: 'actions',
+                  headerName: 'ACTIONS',
+                  flex: 0.55,
+                  sortable: false,
+                  filterable: false,
+                  align: 'center',
+                  headerAlign: 'center',
+                  renderCell: ({ row }) => (
+                    <Stack direction="row" spacing={1} justifyContent="center" sx={{ width: '100%' }}>
+                      <Tooltip title="Approve">
+                        <IconButton
+                          onClick={() => openModal(row, '1')}
+                          size="small"
+                          sx={{
+                            bgcolor: '#ecfdf5',
+                            border: '1px solid #bbf7d0',
+                            '&:hover': { bgcolor: '#dcfce7' }
+                          }}
+                        >
+                          <CheckCircleIcon fontSize="small" sx={{ color: '#16a34a' }} />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Reject">
+                        <IconButton
+                          onClick={() => openModal(row, '2')}
+                          size="small"
+                          sx={{
+                            bgcolor: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            '&:hover': { bgcolor: '#fee2e2' }
+                          }}
+                        >
+                          <CancelIcon fontSize="small" sx={{ color: '#ef4444' }} />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  )
+                }
+              ]}
+              rowCount={totalCount}
+              loading={loading}
+              columnHeaderHeight={48}
+              pagination
+              paginationMode="server"
+              pageSizeOptions={[10, 25, 50]}
+              paginationModel={{ page: Math.max(0, currentPage - 1), pageSize: itemsPerPage }}
+              onPaginationModelChange={(m) => {
+                setCurrentPage(Number(m.page) + 1);
+              }}
+              disableRowSelectionOnClick
+              sx={{
+                border: 'none',
+                '& .MuiDataGrid-columnHeaders': {
+                  bgcolor: '#334155',
+                  color: 'white',
+                  borderBottom: '1px solid #1f2937'
+                },
+                '& .MuiDataGrid-columnHeader': { bgcolor: '#334155' },
+                '& .MuiDataGrid-columnHeaderTitle': { fontWeight: 900, color: 'white' },
+                '& .MuiDataGrid-iconButtonContainer, & .MuiDataGrid-menuIcon': { color: 'white' },
+                '& .MuiDataGrid-cell': { py: isSmall ? 0.8 : 1.2 },
+                '& .MuiDataGrid-row:hover': { bgcolor: '#f8fafc' }
+              }}
+              rowHeight={isSmall ? 60 : 72}
+              autoHeight
+            />
+          </Paper>
+        </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3 }}>
           <Typography variant="caption" sx={{ color: '#64748b' }}>

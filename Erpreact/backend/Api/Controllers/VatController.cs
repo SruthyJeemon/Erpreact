@@ -26,17 +26,22 @@ namespace Api.Controllers
                 using (SqlConnection conn = new SqlConnection(connectionString))
                 {
                     conn.Open();
-                    using (SqlCommand cmd = new SqlCommand("Sp_Vat", conn))
+                    // Some DBs have Sp_Vat with a different parameter list; avoid breaking the UI by using direct SQL for reads.
+                    // This endpoint is used by UI dropdowns (e.g. Sales Quote Create).
+                    string sql = @"
+SELECT Id, Vatname, Vatvalue, Description, Aliasname, Isdelete, Status
+FROM dbo.Tbl_Vat
+WHERE (@Isdelete = '' OR CONVERT(varchar(10), ISNULL(Isdelete, 0)) = @Isdelete)
+  AND (@Status = '' OR LTRIM(RTRIM(ISNULL(Status,''))) = LTRIM(RTRIM(@Status)))
+  AND (@Vatname = '' OR ISNULL(Vatname,'') LIKE '%' + @Vatname + '%')
+ORDER BY Id DESC;";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
-                        cmd.CommandType = CommandType.StoredProcedure;
-                        cmd.Parameters.AddWithValue("@Id", 0);
-                        cmd.Parameters.AddWithValue("@Vatname", vatname);
-                        cmd.Parameters.AddWithValue("@Vatvalue", "");
-                        cmd.Parameters.AddWithValue("@Description", "");
-                        cmd.Parameters.AddWithValue("@Isdelete", isdelete);
-                        cmd.Parameters.AddWithValue("@Status", status);
-                        cmd.Parameters.AddWithValue("@Aliasname", "");
-                        cmd.Parameters.AddWithValue("@Query", query);
+                        cmd.CommandType = CommandType.Text;
+                        cmd.Parameters.AddWithValue("@Isdelete", (isdelete ?? "").Trim());
+                        cmd.Parameters.AddWithValue("@Status", (status ?? "").Trim());
+                        cmd.Parameters.AddWithValue("@Vatname", (vatname ?? "").Trim());
 
                         using (SqlDataReader reader = cmd.ExecuteReader())
                         {

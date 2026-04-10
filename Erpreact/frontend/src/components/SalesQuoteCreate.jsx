@@ -23,6 +23,7 @@ import {
     Checkbox,
     FormControlLabel,
     Autocomplete,
+    Chip,
     CircularProgress,
     Alert
 } from '@mui/material';
@@ -50,27 +51,99 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
     const isTablet = useMediaQuery(theme.breakpoints.down('md'));
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
 
+    // Make the header form comfortable on mobile.
+    const fieldLabelSx = {
+        mb: 0.75,
+        fontSize: isMobile ? '11px' : '12px',
+        fontWeight: 800,
+        color: '#475569',
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em'
+    };
+    const inputSize = (isMobile || isTablet) ? 'medium' : 'small';
+    const inputSx = {
+        bgcolor: 'white',
+        '& .MuiOutlinedInput-root': { borderRadius: '12px' },
+        '& .MuiInputBase-root': { minHeight: isMobile ? 46 : 44 },
+        '& .MuiInputBase-input': { fontSize: isMobile ? '0.95rem' : '0.9rem', py: 1.25 }
+    };
+    const selectSx = {
+        bgcolor: 'white',
+        borderRadius: '12px',
+        '& .MuiInputBase-root': { minHeight: isMobile ? 46 : 44 },
+        '& .MuiSelect-select': { fontSize: isMobile ? '0.95rem' : '0.9rem', py: 1.25 }
+    };
+
+    // "Classic" salesquote header inputs are square like legacy UI.
+    const classicInputSx = { bgcolor: 'white', '& .MuiOutlinedInput-root': { borderRadius: 0 } };
+    const classicSelectSx = { bgcolor: 'white', borderRadius: 0 };
+
+    // Legacy Terms values (match old HTML select values 1..7).
+    const TERMS_OPTIONS = [
+        { Id: 1, Paymentterms: 'Consignment' },
+        { Id: 2, Paymentterms: 'Due on receipt' },
+        { Id: 3, Paymentterms: 'Net 15' },
+        { Id: 4, Paymentterms: 'Net 30' },
+        { Id: 5, Paymentterms: 'Net 60' },
+        { Id: 6, Paymentterms: 'Net 45' },
+        { Id: 7, Paymentterms: 'Net 90' }
+    ];
+
+    const getTermDays = (term) => {
+        const idRaw = term?.Id ?? term?.id ?? term;
+        const id = idRaw == null ? null : Number(idRaw);
+        if (!Number.isFinite(id)) return 0;
+        switch (id) {
+            case 3: return 15;
+            case 4: return 30;
+            case 5: return 60;
+            case 6: return 45;
+            case 7: return 90;
+            case 2: return 0; // Due on receipt
+            case 1: return 0; // Consignment (keep immediate; adjust if business rule differs)
+            default: return 0;
+        }
+    };
+
+    const buildAddress = (c) => {
+        const parts = [
+            c?.Streetaddress1 ?? c?.streetaddress1,
+            c?.Streetaddress2 ?? c?.streetaddress2,
+            c?.City ?? c?.city,
+            c?.Province ?? c?.province,
+            c?.Postalcode ?? c?.postalcode,
+            c?.Country ?? c?.country
+        ]
+            .map((x) => (x == null ? '' : String(x).trim()))
+            .filter(Boolean);
+        return parts.join(', ');
+    };
+
     const [billData, setBillData] = useState({
         customerName: '',
         customerEmail: '',
         customerId: '',
         contact: '',
         phone: '',
-        terms: '',
+        // Default Terms: Net 30 (Id = 4)
+        terms: '4',
+        salesPersonId: '',
         salesLocation: 'Select Location',
-        vatNumber: '',
-        currencyValue: 3.67,
+        // Company TRN (fixed)
+        vatNumber: '100509789200003',
+        currencyValue: 1,
         currencyId: '1',
         billNo: '',
         billDate: dayjs(),
         dueDate: dayjs().add(30, 'day'),
+        deliveryDate: dayjs().add(30, 'day'),
         showShippingAddress: false,
         warehouseId: '',
         warehouseName: '',
         billingAddress: '',
         shippingAddress: '',
         salesPersonName: 'Select',
-        amountsAre: 'Exclusive of tax',
+        amountsAre: 'Exclusive',
         remarks: '',
         discountType: 'Percentage',
         discountValue: 0,
@@ -83,7 +156,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         { id: Date.now(), category: null, description: '', amount: '0.00', tax: '', taxId: '', total: '0.00' }
     ]);
     const [itemRows, setItemRows] = useState([
-        { id: Date.now() + 1, product: null, qty: '1', amount: '0.00', vat: '', vatId: '', total: '0.00', description: '', isSerialized: false }
+        { id: Date.now() + 1, product: null, qty: '', amount: '0.00', vat: '', vatId: '', total: '0.00', description: '', isSerialized: false }
     ]);
 
     const [customers, setCustomers] = useState([]);
@@ -100,6 +173,17 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
     const [termsList, setTermsList] = useState([]);
 
     const [feedback, setFeedback] = useState({ open: false, message: '', severity: 'success' });
+    const [attemptedSave, setAttemptedSave] = useState(false);
+
+    const requiredErrors = React.useMemo(() => {
+        const errors = {};
+        if (!billData.customerId) errors.customerId = 'Customer Name is required';
+        if (!String(billData.billingAddress || '').trim()) errors.billingAddress = 'Billing Address is required';
+        if (!String(billData.shippingAddress || '').trim()) errors.shippingAddress = 'Shipping Address is required';
+        return errors;
+    }, [billData.customerId, billData.billingAddress, billData.shippingAddress]);
+
+    const hasRequiredErrors = Object.keys(requiredErrors).length > 0;
 
     // Fetch initial data
     useEffect(() => {
@@ -110,6 +194,35 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             generateNextBillNo();
         }
     }, [quoteId, mode]);
+
+    // Auto-calc due date from bill date + terms.
+    useEffect(() => {
+        if (!billData.billDate || !dayjs(billData.billDate).isValid()) return;
+        const days = getTermDays(billData.terms);
+        const nextDue = dayjs(billData.billDate).add(days, 'day');
+        if (!nextDue.isValid()) return;
+        if (billData.dueDate && dayjs(billData.dueDate).isValid() && dayjs(billData.dueDate).isSame(nextDue, 'day')) return;
+        setBillData(prev => ({ ...prev, dueDate: nextDue }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [billData.billDate, billData.terms]);
+
+    // If customer selection provided Salespersonid before salesPersons loaded, resolve it later.
+    useEffect(() => {
+        const spId = billData.salesPersonId;
+        if (!spId) return;
+        if (!Array.isArray(salesPersons) || salesPersons.length === 0) return;
+
+        const sp = salesPersons.find(x => String(x.Id || x.id) === String(spId));
+        if (!sp) return;
+
+        const spName = sp.Salesperson || sp.salesperson || sp.SalesPerson || sp.Name || sp.name || 'Select';
+        if (!spName) return;
+
+        setBillData(prev => ({
+            ...prev,
+            salesPersonName: spName
+        }));
+    }, [billData.salesPersonId, salesPersons]);
 
     const fetchMetadata = async () => {
         try {
@@ -128,18 +241,31 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 setVatOptions(Array.isArray(vatData) ? vatData : (vatData?.data || vatData?.Data || []));
             }
 
-            // Fetch Terms
-            const termsRes = await fetch(`${API_URL}/api/paymentterms`);
-            if (termsRes.ok) {
-                const termsData = await termsRes.json();
-                setTermsList(Array.isArray(termsData) ? termsData : (termsData?.data || termsData?.Data || []));
-            }
+            // Terms: use legacy fixed list (1..7) so it matches old system values.
+            setTermsList(TERMS_OPTIONS);
 
             // Fetch Sales Persons from the dedicated endpoint
             const usersRes = await fetch(`${API_URL}/api/salesperson`);
             if (usersRes.ok) {
                 const usersData = await usersRes.json();
-                setSalesPersons(Array.isArray(usersData) ? usersData : (usersData?.data || usersData?.Data || []));
+                setSalesPersons(
+                    Array.isArray(usersData)
+                        ? usersData
+                        : (usersData?.value || usersData?.data || usersData?.Data || [])
+                );
+            }
+
+            // Category Details: chart of accounts (same as legacy Sp_Chartofaccounts @Query=7 / getchartofaccountscategory)
+            setLoadingCategories(true);
+            try {
+                const coaRes = await fetch(`${API_URL}/api/chartofaccounts?query=7&isdelete=0&status=Active`);
+                if (coaRes.ok) {
+                    const coaJson = await coaRes.json();
+                    const list = coaJson.Data || coaJson.data || [];
+                    setCategories(Array.isArray(list) ? list : []);
+                }
+            } finally {
+                setLoadingCategories(false);
             }
 
         } catch (error) {
@@ -152,7 +278,8 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             const res = await fetch(`${API_URL}/api/salesquote/next-no`);
             if (res.ok) {
                 const data = await res.json();
-                setBillData(prev => ({ ...prev, billNo: data.nextNo }));
+                const nextNo = data?.nextNo || data?.NextNo || data?.nextno || data?.nextNO;
+                if (nextNo) setBillData(prev => ({ ...prev, billNo: String(nextNo) }));
             } else {
                 // Fallback
                 setBillData(prev => ({ ...prev, billNo: `SQ-${dayjs().format('YYYYMMDD')}-001` }));
@@ -168,38 +295,65 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             const data = await response.json();
             if (data.success) {
                 const head = data.header;
+                const termsIdRaw = head.Terms ?? head.terms;
+                const fromDbAmountsAre = (dbVal) => {
+                    const v = String(dbVal || '').trim().toLowerCase();
+                    if (v === 'inclusive') return 'Inclusive';
+                    if (v === 'outofscope' || v === 'out of scope') return 'Outofscope';
+                    if (v === 'exclusing' || v === 'exclusive') return 'Exclusive';
+                    // fallback: already UI value
+                    return dbVal || 'Exclusive';
+                };
+
                 setBillData({
                     customerName: head.Customername || '',
                     customerEmail: '', // Not in header currently
                     customerId: head.Customerid || '',
                     contact: head.Contact || '',
                     phone: head.Phone || '',
-                    terms: head.Terms || '',
+                    terms: termsIdRaw == null ? '4' : String(termsIdRaw),
                     salesLocation: head.Sales_location || 'Select Location',
                     vatNumber: head.Vatnumber || head.CustomerTrn || '',
-                    currencyValue: 3.67,
+                    currencyValue: 1,
                     currencyId: '1',
                     billNo: head.Salesquoteno || '',
                     billDate: dayjs(head.Billdate),
                     dueDate: dayjs(head.Duedate),
+                    deliveryDate: head.Deliverydate
+                        ? dayjs(head.Deliverydate)
+                        : dayjs(head.Duedate),
                     showShippingAddress: !!head.Shipping_address,
                     warehouseId: '', // Need to map
                     warehouseName: '',
                     billingAddress: head.Billing_address || '',
                     shippingAddress: head.Shipping_address || '',
-                    salesPersonName: head.Salespersonname || 'Select',
-                    amountsAre: head.Amountsare || 'Exclusive of tax',
+                    salesPersonId: head.Salespersonname ? String(head.Salespersonname) : '',
+                    salesPersonName: 'Select',
+                    amountsAre: fromDbAmountsAre(head.Amountsare),
                     remarks: head.Remarks || '',
-                    discountType: head.DiscountType || 'Percentage',
-                    discountValue: head.DiscountValue || 0,
-                    discountAmount: head.DiscountAmount || 0
+                    discountType: (() => {
+                        const raw = String(head.Discounttype ?? head.DiscountType ?? '').trim();
+                        if (raw === '1') return 'Discount Value';
+                        if (raw === '2') return 'Discount Percentage';
+                        if (raw.toLowerCase() === 'discount value') return 'Discount Value';
+                        if (raw.toLowerCase() === 'discount percentage') return 'Discount Percentage';
+                        return '';
+                    })(),
+                    discountValue: head.Discountvalue ?? head.DiscountValue ?? 0,
+                    discountAmount: head.Discountamount ?? head.DiscountAmount ?? 0
                 });
 
                 if (data.items && data.items.length > 0) {
                     setItemRows(data.items.map(item => ({
                         id: item.Id,
-                        product: { id: item.Itemid, Itemname: item.Itemname },
-                        qty: item.Qty || '1',
+                        product: {
+                            Id: item.Itemid,
+                            id: item.Itemid,
+                            Itemname: item.Itemname,
+                            itemname: item.Itemname,
+                            Type: item.Type || 'Item'
+                        },
+                        qty: item.Qty || '',
                         amount: item.Amount || '0.00',
                         vat: item.Vat || '',
                         vatId: '', // Need to map
@@ -214,7 +368,14 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 if (data.categories && data.categories.length > 0) {
                     setCategoryRows(data.categories.map(cat => ({
                         id: cat.Id,
-                        category: { id: cat.Categoryid, Categoryname: cat.Categoryname },
+                        category: {
+                            Id: cat.Categoryid,
+                            id: cat.Categoryid,
+                            Categoryid: cat.Categoryid,
+                            categoryid: cat.Categoryid,
+                            Categoryname: cat.Categoryname,
+                            categoryname: cat.Categoryname
+                        },
                         description: '',
                         amount: cat.Amount || '0.00',
                         tax: cat.Vat || '',
@@ -249,32 +410,61 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         }
     };
 
-    const fetchCategories = async (query) => {
+    const fetchCategories = async () => {
         setLoadingCategories(true);
         try {
-            const res = await fetch(`${API_URL}/api/category?search=${encodeURIComponent(query || '')}&pageSize=100`);
-            if (res.ok) {
-                const result = await res.json();
-                // Handle different response structures for category
-                const data = Array.isArray(result) ? result : (result.data || result.Data || []);
-                setCategories(data);
-            }
+            const res = await fetch(`${API_URL}/api/chartofaccounts?query=7&isdelete=0&status=Active`);
+            if (!res.ok) return;
+            const result = await res.json();
+            const list = result.Data || result.data || [];
+            setCategories(Array.isArray(list) ? list : []);
         } catch (error) {
-            console.error('Category fetch error:', error);
+            console.error('Chart of accounts (category) fetch error:', error);
         } finally {
             setLoadingCategories(false);
         }
     };
 
+    const categoryOptionLabel = (option) => {
+        if (!option) return '';
+        const name = option.Name || option.name || option.Categoryname || option.categoryname || '';
+        const acc = option.Acc_type || option.acc_type || option.Accounttype || option.accounttype;
+        if (name && acc) return `${name} (${acc})`;
+        return name || String(option.Id ?? option.id ?? '');
+    };
+
+    const renderOptionWithMeta = (props, primary, meta) => {
+        const { key, ...rest } = props;
+        return (
+            <li key={key} {...rest}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1.5, width: '100%' }}>
+                <Box sx={{ minWidth: 0 }}>
+                    <Typography sx={{ fontWeight: 800, color: '#0f172a', lineHeight: 1.2, fontSize: '0.92rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {primary}
+                    </Typography>
+                    {meta ? (
+                        <Typography variant="caption" sx={{ color: '#64748b', lineHeight: 1.2, display: 'block', mt: 0.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {meta}
+                        </Typography>
+                    ) : null}
+                </Box>
+            </Box>
+            </li>
+        );
+    };
+
     const fetchProducts = async (query) => {
-        if (!query || query.length < 1) return;
+        if (!query || query.trim().length < 3) {
+            setProducts([]);
+            return;
+        }
         setLoadingProducts(true);
         try {
-            // Using the search endpoint which works with itemname parameter
-            const res = await fetch(`${API_URL}/api/product/search?itemname=${encodeURIComponent(query)}&query=26`);
+            // Search Item/Set/Combo across master tables
+            const res = await fetch(`${API_URL}/api/item-options?q=${encodeURIComponent(query.trim())}`);
             if (res.ok) {
                 const result = await res.json();
-                setProducts(result.data || result.Data || []);
+                setProducts(result.List1 || result.list1 || []);
             }
         } catch (error) {
             console.error('Product fetch error:', error);
@@ -283,18 +473,66 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         }
     };
 
-    const handleCustomerChange = (event, newValue) => {
-        if (newValue) {
+    const handleCustomerChange = async (event, newValue) => {
+        if (!newValue) return;
+
+        const id = newValue.Id || newValue.id || '';
+        const displayName =
+            newValue.Customername
+            || newValue.customername
+            || newValue.Customerdisplayname
+            || newValue.customerdisplayname
+            || newValue.Name
+            || newValue.name
+            || '';
+
+        // Set basic info immediately so UI feels responsive.
+        setBillData(prev => ({
+            ...prev,
+            customerName: displayName,
+            customerId: id == null ? '' : String(id)
+        }));
+
+        try {
+            const res = await fetch(`${API_URL}/api/customer/${encodeURIComponent(String(id))}`);
+            const result = await res.json().catch(() => ({}));
+            const c = result?.data || result?.Data || null;
+            if (!res.ok || !c) return;
+
+            // Fill from Tbl_Customer columns
+            const email = (c.Email ?? c.email ?? '').toString();
+            const contact = (c.Phonenumber ?? c.phonenumber ?? '').toString();
+            const mobile = (c.Mobilenumber ?? c.mobilenumber ?? '').toString();
+            const vat = (c.Licenseno ?? c.licenseno ?? c.Vatnumber ?? c.vatnumber ?? '').toString();
+            const termsIdRaw = c.Terms ?? c.terms;
+            const termsId = termsIdRaw == null ? null : Number(termsIdRaw);
+            const termsStr = Number.isFinite(termsId) ? String(termsId) : '4';
+
+            const billing = buildAddress(c);
+            const shipping = buildAddress(c); // no separate shipping columns in Tbl_Customer, reuse
+
+            // Salespersonid -> select name
+            const spIdRaw = c.Salespersonid ?? c.salespersonid;
+            const spId = spIdRaw == null ? null : Number(spIdRaw);
+            const sp = Number.isFinite(spId)
+                ? salesPersons.find(x => Number(x.Id || x.id) === Number(spId))
+                : null;
+            const spName = sp ? (sp.Salesperson || sp.salesperson || sp.Name || sp.name || 'Select') : 'Select';
+
             setBillData(prev => ({
                 ...prev,
-                customerName: newValue.Customerdisplayname || newValue.customerdisplayname || '',
-                customerId: newValue.Id || newValue.id || '',
-                customerEmail: newValue.Email || newValue.email || '',
-                phone: newValue.Workphone || newValue.workphone || '',
-                billingAddress: newValue.Billing_address || newValue.billing_address || '',
-                shippingAddress: newValue.Shipping_address || newValue.shipping_address || '',
-                vatNumber: newValue.Vatnumber || newValue.vatnumber || ''
+                customerEmail: email,
+                contact: contact,
+                phone: mobile,
+                vatNumber: vat,
+                billingAddress: billing,
+                shippingAddress: shipping,
+                terms: termsStr,
+                salesPersonId: spIdRaw == null ? '' : String(spIdRaw),
+                salesPersonName: spName
             }));
+        } catch (error) {
+            console.error('Customer details fetch error:', error);
         }
     };
 
@@ -315,7 +553,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
     };
 
     const handleAddItemRow = () => {
-        setItemRows([...itemRows, { id: Date.now(), product: null, qty: '1', amount: '0.00', vat: '', vatId: '', total: '0.00', description: '', isSerialized: false }]);
+        setItemRows([...itemRows, { id: Date.now(), product: null, qty: '', amount: '0.00', vat: '', vatId: '', total: '0.00', description: '', isSerialized: false }]);
     };
 
     const handleDeleteCategoryRow = (id) => {
@@ -336,7 +574,14 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
 
         // Auto-fill description if category selected
         if (field === 'category' && value) {
-            newRows[index].description = value.Name || value.name || '';
+            newRows[index].description =
+                value.Name || value.name || value.Categoryname || value.categoryname || '';
+        }
+
+        // Set taxId when tax changes (store Vat Id)
+        if (field === 'tax') {
+            const opt = vatOptions.find(v => (v.Vatname || v.vatname) === value);
+            newRows[index].taxId = opt ? String(opt.Id || opt.id || '') : '';
         }
 
         // Recalculate total for row if amount or tax changes
@@ -365,6 +610,10 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         }
 
         if (field === 'qty' || field === 'amount' || field === 'vat' || field === 'product') {
+            if (field === 'vat') {
+                const opt = vatOptions.find(v => (v.Vatname || v.vatname) === value);
+                newRows[index].vatId = opt ? String(opt.Id || opt.id || '') : '';
+            }
             const qty = parseFloat(newRows[index].qty) || 0;
             const amt = parseFloat(newRows[index].amount) || 0;
             const vatOption = vatOptions.find(v => (v.Vatname || v.vatname) === newRows[index].vat);
@@ -378,84 +627,275 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             }
         }
         setItemRows(newRows);
+
+        // Stock check when qty changes (legacy checkqty1 behavior)
+        if (field === 'qty') {
+            const current = newRows[index];
+            const variantId = current.product?.Id || current.product?.id || '';
+            const type = current.product?.Type || current.product?.type || 'Item';
+            const warehouseId = billData.warehouseId || '';
+            const deliveryDate = billData.deliveryDate?.isValid?.() ? billData.deliveryDate.format('YYYY-MM-DD') : '';
+
+            if (!variantId || !warehouseId) return;
+
+            const totalQtyOnTable = newRows.reduce((sum, r) => {
+                const rId = r.product?.Id || r.product?.id || '';
+                if (String(rId) !== String(variantId)) return sum;
+                return sum + (Number.parseFloat(r.qty) || 0);
+            }, 0);
+
+            fetch(`${API_URL}/api/salesquote/checkqty`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    variantid: String(variantId),
+                    qty: totalQtyOnTable,
+                    type: String(type),
+                    warehouseid: String(warehouseId),
+                    deliverydate: deliveryDate || null
+                })
+            })
+                .then(r => r.json().catch(() => ({})))
+                .then(data => {
+                    const stockAvailable = Number.parseFloat(data?.msg);
+                    if (!Number.isFinite(stockAvailable)) return;
+                    if (totalQtyOnTable > stockAvailable) {
+                        // Clear this input and alert
+                        setItemRows(prev => {
+                            const copy = [...prev];
+                            copy[index] = { ...copy[index], qty: '' };
+                            return copy;
+                        });
+                        Swal.fire({
+                            title: `<strong>Invalid Stock</strong>`,
+                            icon: "error",
+                            html: String(data?.msg ?? 'Insufficient stock'),
+                            confirmButtonText: 'OK'
+                        });
+                    }
+                })
+                .catch(() => { });
+        }
     };
 
-    const calculateTotals = () => {
-        let subTotal = 0;
-        let totalTax = 0;
+    const computeDiscountAmount = (subTotalValue) => {
+        const base = Number.parseFloat(subTotalValue) || 0;
+        const value = Number.parseFloat(billData.discountValue) || 0;
+        if (!Number.isFinite(base) || base <= 0) return 0;
+        if (!Number.isFinite(value) || value <= 0) return 0;
 
-        const isInclusive = billData.amountsAre === 'Inclusive of tax';
+        if ((billData.discountType || '').toLowerCase() === 'discount percentage') {
+            return (base * value) / 100;
+        }
+        if ((billData.discountType || '').toLowerCase() === 'discount value') {
+            return value;
+        }
+        return value;
+    };
 
-        categoryRows.forEach(row => {
-            const amt = parseFloat(row.amount) || 0;
-            const vatOption = vatOptions.find(v => (v.Vatname || v.vatname) === row.tax);
-            const rate = vatOption ? (parseFloat(vatOption.Vatvalue) || 0) : 0;
+    const pricingSummary = React.useMemo(() => {
+        const amountsMode = billData.amountsAre || 'Exclusive';
+        const isInclusive = amountsMode === 'Inclusive' || amountsMode === 'Inclusive of tax';
+        const isOutOfScope = amountsMode === 'Outofscope' || amountsMode === 'Out of scope of tax';
 
-            if (isInclusive) {
-                const net = amt / (1 + rate / 100);
-                subTotal += net;
-                totalTax += (amt - net);
-            } else {
-                subTotal += amt;
-                totalTax += (amt * (rate / 100));
-            }
-        });
+        const getRate = (name) => {
+            if (isOutOfScope) return 0;
+            const opt = vatOptions.find(v => (v.Vatname || v.vatname) === name);
+            const rate = opt ? (Number.parseFloat(opt.Vatvalue || opt.vatvalue) || 0) : 0;
+            return Number.isFinite(rate) ? rate : 0;
+        };
 
+        // Build groups by VAT rate. Track gross amount so we can allocate discount before tax.
+        const groups = new Map(); // rateKey -> { rate, gross }
+
+        const addGross = (grossAmount, vatName) => {
+            const gross = Number.parseFloat(grossAmount) || 0;
+            if (!Number.isFinite(gross) || gross <= 0) return;
+            const rate = getRate(vatName);
+            const key = String(rate);
+            const current = groups.get(key) || { rate, gross: 0 };
+            current.gross += gross;
+            groups.set(key, current);
+        };
+
+        // Categories: amount is already the line total (gross)
+        categoryRows.forEach(row => addGross(row.amount, row.tax));
+
+        // Items: qty * amount is gross
         itemRows.forEach(row => {
-            const qty = parseFloat(row.qty) || 0;
-            const amt = parseFloat(row.amount) || 0;
-            const lineSub = qty * amt;
-            const vatOption = vatOptions.find(v => (v.Vatname || v.vatname) === row.vat);
-            const rate = vatOption ? (parseFloat(vatOption.Vatvalue) || 0) : 0;
-
-            if (isInclusive) {
-                const net = lineSub / (1 + rate / 100);
-                subTotal += net;
-                totalTax += (lineSub - net);
-            } else {
-                subTotal += lineSub;
-                totalTax += (lineSub * (rate / 100));
-            }
+            const qty = Number.parseFloat(row.qty) || 0;
+            const amt = Number.parseFloat(row.amount) || 0;
+            const gross = qty * amt;
+            addGross(gross, row.vat);
         });
 
-        const grandTotal = subTotal + totalTax - (parseFloat(billData.discountAmount) || 0);
+        const grossTotal = Array.from(groups.values()).reduce((s, g) => s + (Number.parseFloat(g.gross) || 0), 0);
+
+        // Subtotal before discount (net of VAT if inclusive)
+        const subTotalBeforeDiscount = Array.from(groups.values()).reduce((s, g) => {
+            const rate = Number.parseFloat(g.rate) || 0;
+            if (isInclusive && rate > 0) return s + (g.gross / (1 + rate / 100));
+            return s + g.gross;
+        }, 0);
+
+        const rawDiscount = computeDiscountAmount(subTotalBeforeDiscount);
+        const discount = Math.min(Math.max(0, rawDiscount), Math.max(0, subTotalBeforeDiscount));
+
+        // Allocate discount proportionally across VAT groups by gross (closest to UI expectation).
+        // (If there is no gross, nothing to allocate.)
+        const allocations = new Map(); // rateKey -> discountOnGross
+        if (grossTotal > 0 && discount > 0) {
+            let allocated = 0;
+            const sorted = Array.from(groups.entries()).sort((a, b) => (a[1].rate - b[1].rate));
+            sorted.forEach(([key, g], idx) => {
+                const share = (idx === sorted.length - 1)
+                    ? (discount - allocated)
+                    : (discount * (g.gross / grossTotal));
+                const rounded = Number(share.toFixed(2));
+                allocated += rounded;
+                allocations.set(key, rounded);
+            });
+        }
+
+        const computedLines = Array.from(groups.entries())
+            .map(([key, g]) => {
+                const rate = Number.parseFloat(g.rate) || 0;
+                const disc = allocations.get(key) || 0;
+                const grossAfter = Math.max(0, g.gross - disc);
+
+                if (isInclusive && rate > 0) {
+                    const net = grossAfter / (1 + rate / 100);
+                    const tax = grossAfter - net;
+                    return { rate, base: Number(net.toFixed(2)), tax: Number(tax.toFixed(2)), grossAfter: Number(grossAfter.toFixed(2)) };
+                }
+
+                // Exclusive/out-of-scope/0%: base is grossAfter.
+                const base = grossAfter;
+                const tax = isOutOfScope ? 0 : (base * (rate / 100));
+                return { rate, base: Number(base.toFixed(2)), tax: Number(tax.toFixed(2)), grossAfter: Number(grossAfter.toFixed(2)) };
+            })
+            .filter(v => (v.base || 0) > 0)
+            .sort((a, b) => a.rate - b.rate);
+
+        const grossAfterDiscount = computedLines.reduce((s, v) => s + (Number.parseFloat(v.grossAfter) || 0), 0);
+
+        const vatLines = isOutOfScope
+            ? []
+            : computedLines.map(({ rate, base, tax }) => ({ rate, base, tax }));
+
+        const subTotal = isOutOfScope
+            ? grossAfterDiscount
+            : vatLines.reduce((s, v) => s + (Number.parseFloat(v.base) || 0), 0);
+
+        const totalTax = isOutOfScope
+            ? 0
+            : vatLines.reduce((s, v) => s + (Number.parseFloat(v.tax) || 0), 0);
+
+        const grandTotal = isOutOfScope ? subTotal : (subTotal + totalTax);
 
         return {
-            subTotal: subTotal.toFixed(2),
-            totalTax: totalTax.toFixed(2),
-            grandTotal: grandTotal.toFixed(2)
+            discountAmount: Number(discount.toFixed(2)),
+            grossAfterDiscount: Number(grossAfterDiscount.toFixed(2)),
+            vatLines,
+            totals: {
+                subTotal: subTotal.toFixed(2),
+                totalTax: totalTax.toFixed(2),
+                grandTotal: grandTotal.toFixed(2),
+            }
         };
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [billData.amountsAre, billData.discountType, billData.discountValue, categoryRows, itemRows, vatOptions]);
 
-    const totals = calculateTotals();
+    const totals = pricingSummary.totals;
+
+    useEffect(() => {
+        const next = pricingSummary.discountAmount;
+        if (Number(next) === Number(billData.discountAmount || 0)) return;
+        setBillData(prev => ({ ...prev, discountAmount: next }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pricingSummary.discountAmount]);
 
     const handleSave = async () => {
         try {
-            if (!billData.customerId) {
-                Swal.fire('Error', 'Please select a customer', 'error');
+            setAttemptedSave(true);
+            if (hasRequiredErrors) {
+                const msg = requiredErrors.customerId || 'Please fill required fields';
+                Swal.fire('Error', msg, 'error');
                 return;
             }
 
             const formData = new FormData();
 
             // Map billData to SalesQuoteFormData object
+            const toNum = (v) => {
+                const n = typeof v === 'number' ? v : Number.parseFloat(String(v ?? ''));
+                return Number.isFinite(n) ? n : 0;
+            };
+
+            // DB expects legacy strings: Exclusing / Inclusive / Outofscope
+            const toDbAmountsAre = (uiVal) => {
+                const v = String(uiVal || '').trim().toLowerCase();
+                if (v === 'inclusive of tax' || v === 'inclusive') return 'Inclusive';
+                if (v === 'out of scope of tax' || v === 'outofscope' || v === 'out of scope') return 'Outofscope';
+                return 'Exclusing';
+            };
+
+            // When loading from DB, map back to UI labels.
+            const fromDbAmountsAre = (dbVal) => {
+                const v = String(dbVal || '').trim().toLowerCase();
+                if (v === 'inclusive') return 'Inclusive';
+                if (v === 'outofscope' || v === 'out of scope') return 'Outofscope';
+                if (v === 'exclusing' || v === 'exclusive') return 'Exclusive';
+                return 'Exclusive';
+            };
+            const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+            const userObj = (() => {
+                try { return userStr ? JSON.parse(userStr) : {}; } catch { return {}; }
+            })();
+            const currentUserId = String(userObj?.Userid || userObj?.userid || userObj?.UserId || userObj?.userId || userObj?.id || userObj?.Id || 'ADMIN');
+
+            const grandTotalNum = toNum(totals.grandTotal);
+            const currencyRateNum = toNum(billData.currencyValue);
+
             const payload = {
                 id: quoteId || '',
-                userid: 'ADMIN', // Fallback or get from auth
+                userid: currentUserId,
                 customerid: billData.customerId,
                 billdate: billData.billDate.format('YYYY-MM-DD'),
                 duedate: billData.dueDate.format('YYYY-MM-DD'),
-                salesquoteno: billData.billNo,
-                amountsare: billData.amountsAre,
+                deliverydate: billData.deliveryDate && billData.deliveryDate.isValid()
+                    ? billData.deliveryDate.format('YYYY-MM-DD')
+                    : '',
+                // Legacy: Draft should be stored as "Draft" in DB
+                salesquoteno: 'Draft',
+                amountsare: toDbAmountsAre(billData.amountsAre),
+                vatnumber: billData.vatNumber,
                 billing_address: billData.billingAddress,
                 shipping_address: billData.shippingAddress,
-                currency: billData.currencyValue,
-                terms: billData.terms?.Id || billData.terms?.id || '',
-                salespersonname: billData.salesPersonName,
+                sales_location: billData.salesLocation,
+                contact: billData.contact,
+                phoneno: billData.phone,
+                currency: billData.currencyId,
+                currency_rate: currencyRateNum,
+                conversion_amount: grandTotalNum * currencyRateNum,
+                terms: String(billData.terms ?? '4'),
+                // Store salesperson Id in DB (legacy column is Salespersonname)
+                salespersonname: String(billData.salesPersonId || ''),
                 remarks: billData.remarks,
-                sub_total: totals.subTotal,
-                vat_amount: totals.totalTax,
-                grand_total: totals.grandTotal,
+                sub_total: toNum(totals.subTotal),
+                vat_amount: toNum(totals.totalTax),
+                grand_total: grandTotalNum,
+                // Legacy dropdown values: 0=Select, 1=Discount Value, 2=Discount Percentage
+                discounttype: (() => {
+                    const v = String(billData.discountType || '').trim().toLowerCase();
+                    if (!v) return '0';
+                    if (v === 'discount value') return '1';
+                    if (v === 'discount percentage') return '2';
+                    if (v === '1' || v === '2' || v === '0') return v;
+                    return '0';
+                })(),
+                discountvalue: toNum(billData.discountValue),
+                discountamount: toNum(billData.discountAmount),
                 status: 'Draft',
                 type: 'SalesQuote'
             };
@@ -464,26 +904,55 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             formData.append('formData', JSON.stringify(payload));
 
             const tableData1 = itemRows.map(row => ({
-                itemid: row.product?.Id || row.product?.id || '',
-                qty: row.qty.toString(),
-                amount: row.amount.toString(),
-                vat: row.vat || '0',
-                vat_id: row.vatId || '',
-                total: row.total.toString(),
-                type: 'Item'
+                itemid: String(row.product?.Id ?? row.product?.id ?? ''),
+                qty: String(row.qty ?? ''),
+                amount: String(row.amount ?? ''),
+                // Tbl_Salesquotedetails: Vat = VatId, Vat_id = Vatvalue
+                vat: String(row.vatId ?? ''),
+                vat_id: (() => {
+                    const opt = vatOptions.find(v => (v.Vatname || v.vatname) === row.vat);
+                    const rate = opt ? (opt.Vatvalue ?? opt.vatvalue) : '';
+                    return String(rate ?? '');
+                })(),
+                total: String(row.total ?? ''),
+                type: String(row.product?.Type ?? row.product?.type ?? 'Item')
             }));
             formData.append('tableData1', JSON.stringify(tableData1));
 
             const tableDatacategory = categoryRows.map(row => ({
-                categoryid: row.category?.Id || row.category?.id || '',
+                categoryid: String(
+                    row.category?.Id
+                    ?? row.category?.id
+                    ?? row.category?.Categoryid
+                    ?? row.category?.categoryid
+                    ?? ''
+                ),
                 qty: '1',
-                amount: row.amount.toString(),
-                vat: row.tax || '0',
-                vat_id: row.taxId || '',
-                total: row.total.toString(),
-                description: row.description
+                amount: String(row.amount ?? ''),
+                // Tbl_Purchasecategorydetails: Vatvalue = Vatvalue, Vatid = VatId
+                vat: (() => {
+                    const opt = vatOptions.find(v => (v.Vatname || v.vatname) === row.tax);
+                    const rate = opt ? (opt.Vatvalue ?? opt.vatvalue) : '0';
+                    return String(rate ?? '0');
+                })(),
+                vat_id: String(row.taxId ?? ''),
+                total: String(row.total ?? ''),
+                description: String(row.description ?? '')
             }));
             formData.append('tableDatacategory', JSON.stringify(tableDatacategory));
+
+            // VAT breakdown rows (legacy Sp_Purchasevatdetails concept)
+            const tableDatavat = (pricingSummary?.vatLines || []).map(v => {
+                const vatOpt =
+                    vatOptions.find(x => Number(x.Vatvalue || x.vatvalue) === Number(v.rate))
+                    || vatOptions.find(x => Number(x.Vatvalue || x.vatvalue) === Number(parseFloat(v.rate)));
+                return {
+                    id: String(vatOpt?.Id ?? vatOpt?.id ?? ''),
+                    vatprice: String(v.base.toFixed(2)),
+                    vatvalue: String(v.tax.toFixed(2))
+                };
+            }).filter(x => x.id && x.id !== '0');
+            formData.append('tableDatavat', JSON.stringify(tableDatavat));
 
             Swal.fire({
                 title: 'Saving...',
@@ -495,13 +964,14 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 body: formData
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
-            if (response.ok) {
+            if (response.ok && (result.success === true || String(result.Message || '').toLowerCase().includes('success'))) {
                 Swal.fire('Success', 'Sales Quote saved successfully!', 'success');
-                onBack();
+                if (typeof onBack === 'function') onBack();
+                else navigate('/sales-quote');
             } else {
-                Swal.fire('Error', result.message || 'Failed to save sales quote', 'error');
+                Swal.fire('Error', result.detail || result.message || result.title || result.Message || 'Failed to save sales quote', 'error');
             }
         } catch (error) {
             console.error('Save error:', error);
@@ -509,12 +979,17 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         }
     };
 
+    const handleClose = () => {
+        if (typeof onBack === 'function') onBack();
+        else navigate('/sales-quote');
+    };
+
     return (
-        <Box sx={{ width: '100%', bgcolor: '#f1f5f9', minHeight: '100vh', pb: '90px', overflowY: 'auto', boxSizing: 'border-box' }}>
+        <Box sx={{ width: '100%', bgcolor: '#f1f5f9', minHeight: '100vh', pb: 3, overflowY: 'auto', boxSizing: 'border-box' }}>
             <Box sx={{ px: { xs: 0, md: 4 }, py: 3, width: '100%', boxSizing: 'border-box' }}>
                 <Box sx={{ mb: 5, display: 'flex', alignItems: 'center', gap: 3 }}>
                     <IconButton 
-                        onClick={onBack} 
+                        onClick={handleClose} 
                         sx={{ 
                             background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', 
                             color: 'white', 
@@ -537,102 +1012,241 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                     </Box>
                 </Box>
 
-                <Paper elevation={0} sx={{ p: 4, mb: 4, bgcolor: 'white', borderRadius: 3, border: '1px solid #e2e8f0' }}>
-                    <Grid container spacing={3}>
-                        {/* Row 1 */}
-                        <Grid item xs={12} sm={6} md={4}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer Name</InputLabel>
+                <Paper
+                    elevation={0}
+                    sx={{
+                        p: { xs: 2, sm: 2.5, md: 3.5 },
+                        mb: 4,
+                        bgcolor: '#d7e3ea',
+                        borderRadius: 0,
+                        border: '1px solid #cbd5e1',
+                        width: '100%',
+                        maxWidth: '100%',
+                        mx: 0
+                    }}
+                >
+                    <Grid container spacing={isMobile ? 1.5 : 2} sx={{ alignItems: 'flex-start' }}>
+                        {/* Row 1 (keep wide for customer selection) */}
+                        <Grid item xs={12} md={8}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Customer Name:</Typography>
                             <Autocomplete
+                                fullWidth
                                 options={customers}
-                                getOptionLabel={(option) => option.Customerdisplayname || option.customerdisplayname || ''}
-                                isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
-                                value={customers.find(c => (c.Id || c.id) === billData.customerId) || null}
-                                onInputChange={(e, val) => fetchCustomers(val)}
+                                getOptionLabel={(option) =>
+                                    option?.Customername
+                                    || option?.customername
+                                    || option?.Customerdisplayname
+                                    || option?.customerdisplayname
+                                    || option?.Name
+                                    || option?.name
+                                    || ''
+                                }
+                                isOptionEqualToValue={(option, value) =>
+                                    String(option?.Id ?? option?.id ?? '') === String(value?.Id ?? value?.id ?? '')
+                                }
+                                value={customers.find(c => String(c.Id ?? c.id ?? '') === String(billData.customerId ?? '')) || null}
+                                onInputChange={(e, val, reason) => {
+                                    if (reason === 'input') fetchCustomers(val);
+                                }}
                                 onChange={handleCustomerChange}
-                                renderInput={(params) => <TextField {...params} size="small" placeholder="Search..." sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px', width: '100% !important' } }} />}
+                                slotProps={{
+                                    popper: { sx: { minWidth: { xs: '90vw', md: 520 } } },
+                                    paper: { sx: { minWidth: { xs: '90vw', md: 520 } } }
+                                }}
+                                renderOption={(props, option) => {
+                                    const name =
+                                        option.Customername
+                                        || option.customername
+                                        || option.Customerdisplayname
+                                        || option.customerdisplayname
+                                        || option.Name
+                                        || option.name
+                                        || '';
+                                    const email = option.Email || option.email || '';
+                                    return (
+                                        <li {...props}>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                                <Typography sx={{ fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
+                                                    {name}
+                                                </Typography>
+                                                {email ? (
+                                                    <Typography variant="caption" sx={{ color: '#64748b', lineHeight: 1.2, wordBreak: 'break-all' }}>
+                                                        {email}
+                                                    </Typography>
+                                                ) : null}
+                                            </Box>
+                                        </li>
+                                    );
+                                }}
+                                renderInput={(params) => (
+                                    <TextField
+                                        {...params}
+                                        size={inputSize}
+                                        sx={{
+                                            ...classicInputSx,
+                                            '& .MuiInputBase-input': {
+                                                textOverflow: 'clip'
+                                            }
+                                        }}
+                                        inputProps={{
+                                            ...params.inputProps,
+                                            title: String(billData.customerName || '')
+                                        }}
+                                        error={attemptedSave && !!requiredErrors.customerId}
+                                        helperText={attemptedSave && requiredErrors.customerId ? requiredErrors.customerId : ''}
+                                    />
+                                )}
                             />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={4}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Customer Email</InputLabel>
-                            <TextField fullWidth name="customerEmail" value={billData.customerEmail || ''} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={4}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Customer Email:</Typography>
+                            <TextField fullWidth name="customerEmail" value={billData.customerEmail ?? ''} onChange={handleInputChange} size={inputSize} sx={classicInputSx} />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Terms</InputLabel>
-                            <Select fullWidth name="terms" value={billData.terms} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', borderRadius: '12px' }}>
-                                {termsList.map(t => <MenuItem key={t.Id || t.id} value={t}>{t.Paymentterms}</MenuItem>)}
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Terms:</Typography>
+                            <Select fullWidth name="terms" value={billData.terms ?? '4'} onChange={handleInputChange} size={inputSize} sx={classicSelectSx}>
+                                {termsList.map(t => (
+                                    <MenuItem key={t.Id || t.id} value={String(t.Id || t.id)}>
+                                        {t.Paymentterms}
+                                    </MenuItem>
+                                ))}
                             </Select>
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vat Number</InputLabel>
-                            <TextField fullWidth name="vatNumber" value={billData.vatNumber} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Vat Number:</Typography>
+                            <TextField
+                                fullWidth
+                                name="vatNumber"
+                                value={billData.vatNumber ?? ''}
+                                size={inputSize}
+                                sx={classicInputSx}
+                                inputProps={{ readOnly: true }}
+                            />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Currency value</InputLabel>
-                            <TextField fullWidth name="currencyValue" value={billData.currencyValue} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Currency value:</Typography>
+                            <TextField
+                                fullWidth
+                                name="currencyValue"
+                                value={billData.currencyValue ?? 1}
+                                size={inputSize}
+                                sx={classicInputSx}
+                                inputProps={{ readOnly: true }}
+                            />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Bill No</InputLabel>
-                            <TextField fullWidth name="billNo" value={billData.billNo} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Bill No:</Typography>
+                            <TextField
+                                fullWidth
+                                name="billNo"
+                                value={billData.billNo ?? ''}
+                                size={inputSize}
+                                sx={classicInputSx}
+                                inputProps={{ readOnly: true }}
+                            />
                         </Grid>
 
                         {/* Row 2 */}
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Contact</InputLabel>
-                            <TextField fullWidth name="contact" value={billData.contact} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Contact:</Typography>
+                            <TextField fullWidth name="contact" value={billData.contact ?? ''} onChange={handleInputChange} size={inputSize} sx={classicInputSx} />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone</InputLabel>
-                            <TextField fullWidth name="phone" value={billData.phone} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Phone:</Typography>
+                            <TextField fullWidth name="phone" value={billData.phone ?? ''} onChange={handleInputChange} size={inputSize} sx={classicInputSx} />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sales Location</InputLabel>
-                            <Select fullWidth name="salesLocation" value={billData.salesLocation} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', borderRadius: '12px' }}>
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Sales Location:</Typography>
+                            <Select fullWidth name="salesLocation" value={billData.salesLocation ?? 'Select Location'} onChange={handleInputChange} size={inputSize} sx={classicSelectSx}>
                                 <MenuItem value="Select Location">Select Location</MenuItem>
                                 <MenuItem value="Dubai">Dubai</MenuItem>
                                 <MenuItem value="Sharjah">Sharjah</MenuItem>
                             </Select>
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Bill Date</InputLabel>
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Bill Date:</Typography>
                             <LocalizationProvider dateAdapter={AdapterDayjs}>
-                                <DatePicker value={billData.billDate} onChange={(d) => handleDateChange('billDate', d)} format="DD/MM/YYYY" slotProps={{ textField: { size: 'small', fullWidth: true, sx: { bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } } } }} />
+                                <DatePicker value={billData.billDate} onChange={(d) => handleDateChange('billDate', d)} format="YYYY-MM-DD" slotProps={{ textField: { size: inputSize, fullWidth: true, sx: classicInputSx } }} />
                             </LocalizationProvider>
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Due Date</InputLabel>
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Due Date:</Typography>
                             <LocalizationProvider dateAdapter={AdapterDayjs}>
-                                <DatePicker value={billData.dueDate} onChange={(d) => handleDateChange('dueDate', d)} format="DD/MM/YYYY" slotProps={{ textField: { size: 'small', fullWidth: true, sx: { bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } } } }} />
+                                <DatePicker value={billData.dueDate} onChange={(d) => handleDateChange('dueDate', d)} format="YYYY-MM-DD" slotProps={{ textField: { size: inputSize, fullWidth: true, sx: classicInputSx } }} />
                             </LocalizationProvider>
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sales Person</InputLabel>
-                            <Select fullWidth name="salesPersonName" value={billData.salesPersonName} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', borderRadius: '12px' }}>
+                        <Grid item xs={12} md={2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Delivery Date:</Typography>
+                            <LocalizationProvider dateAdapter={AdapterDayjs}>
+                                <DatePicker value={billData.deliveryDate} onChange={(d) => handleDateChange('deliveryDate', d)} format="YYYY-MM-DD" slotProps={{ textField: { size: inputSize, fullWidth: true, sx: classicInputSx } }} />
+                            </LocalizationProvider>
+                        </Grid>
+
+                        {/* Row 3 */}
+                        <Grid item xs={12} md={3}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Sales person name:</Typography>
+                            <Select
+                                fullWidth
+                                name="salesPersonId"
+                                value={billData.salesPersonId || ''}
+                                onChange={(e) => {
+                                    const id = e.target.value;
+                                    const sp = salesPersons.find(x => String(x.Id || x.id) === String(id));
+                                    const spName = sp ? (sp.Salesperson || sp.salesperson || sp.SalesPerson || sp.Name || sp.name || 'Select') : 'Select';
+                                    setBillData(prev => ({ ...prev, salesPersonId: String(id), salesPersonName: spName }));
+                                }}
+                                size={inputSize}
+                                sx={classicSelectSx}
+                            >
                                 <MenuItem value="Select">Select</MenuItem>
                                 {salesPersons.map(sp => (
-                                    <MenuItem key={sp.Id || sp.id} value={sp.Salesperson || sp.SalesPerson || sp.Name}>
-                                        {sp.Salesperson || sp.SalesPerson || sp.Name}
+                                    <MenuItem key={sp.Id || sp.id} value={String(sp.Id || sp.id)}>
+                                        {sp.Salesperson || sp.salesperson || sp.SalesPerson || sp.Name || sp.name || ''}
                                     </MenuItem>
                                 ))}
                             </Select>
                         </Grid>
-
-                        {/* Row 3 */}
-                        <Grid item xs={12} sm={6} md={4}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Billing Address</InputLabel>
-                            <TextField fullWidth multiline rows={2} name="billingAddress" value={billData.billingAddress} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} />
+                        <Grid item xs={12} md={3}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Billing Address:</Typography>
+                            <TextField
+                                fullWidth
+                                multiline
+                                rows={2}
+                                name="billingAddress"
+                                value={billData.billingAddress ?? ''}
+                                onChange={handleInputChange}
+                                size={inputSize}
+                                sx={classicInputSx}
+                                error={attemptedSave && !!requiredErrors.billingAddress}
+                                helperText={attemptedSave && requiredErrors.billingAddress ? requiredErrors.billingAddress : ''}
+                            />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={4}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Shipping Address</InputLabel>
-                            <TextField fullWidth multiline rows={2} name="shippingAddress" value={billData.shippingAddress} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', '& .MuiOutlinedInput-root': { borderRadius: '12px' } }} disabled={billData.showShippingAddress} />
+                        <Grid item xs={12} md={3}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Shipping Address:</Typography>
+                            <TextField
+                                fullWidth
+                                multiline
+                                rows={2}
+                                name="shippingAddress"
+                                value={billData.shippingAddress ?? ''}
+                                onChange={handleInputChange}
+                                size={inputSize}
+                                sx={classicInputSx}
+                                disabled={billData.showShippingAddress}
+                                error={attemptedSave && !!requiredErrors.shippingAddress}
+                                helperText={attemptedSave && requiredErrors.shippingAddress ? requiredErrors.shippingAddress : ''}
+                            />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                            <InputLabel sx={{ mb: 1, fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Warehouse</InputLabel>
-                            <Select fullWidth name="warehouseId" value={billData.warehouseId} onChange={handleInputChange} size="small" sx={{ bgcolor: '#f8fafc', borderRadius: '12px' }}>
-                                {warehouses.map(w => <MenuItem key={w.Id || w.id} value={w.Id || w.id}>{w.Name || w.name}</MenuItem>)}
-                            </Select>
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={2} sx={{ display: 'flex', alignItems: 'flex-end', pb: 1 }}>
-                            <FormControlLabel control={<Checkbox checked={billData.showShippingAddress} onChange={handleInputChange} name="showShippingAddress" size="small" />} label="Same as Billing" />
+                        <Grid item xs={12} md={3}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>Warehouse:</Typography>
+                                    <Select fullWidth name="warehouseId" value={billData.warehouseId} onChange={handleInputChange} size={inputSize} sx={classicSelectSx}>
+                                        {warehouses.map(w => <MenuItem key={w.Id || w.id} value={w.Id || w.id}>{w.Name || w.name}</MenuItem>)}
+                                    </Select>
+                                </Box>
+                                <FormControlLabel control={<Checkbox checked={billData.showShippingAddress} onChange={handleInputChange} name="showShippingAddress" size="small" />} label="Is your shipping address the same as your billing address ?" />
+                            </Box>
                         </Grid>
                     </Grid>
                 </Paper>
@@ -640,9 +1254,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                 <Box sx={{ mb: 4, p: 2, bgcolor: '#fbfcfd', borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>Amounts Are</Typography>
                     <Select value={billData.amountsAre} onChange={(e) => setBillData({ ...billData, amountsAre: e.target.value })} size="small" sx={{ minWidth: 200, bgcolor: 'white' }}>
-                        <MenuItem value="Exclusive of tax">Exclusive of tax</MenuItem>
-                        <MenuItem value="Inclusive of tax">Inclusive of tax</MenuItem>
-                        <MenuItem value="Out of scope of tax">Out of scope of tax</MenuItem>
+                        <MenuItem value="Exclusive">Exclusive</MenuItem>
+                        <MenuItem value="Inclusive">Inclusive</MenuItem>
+                        <MenuItem value="Outofscope">Outofscope</MenuItem>
                     </Select>
                 </Box>
 
@@ -672,9 +1286,21 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                 <TableCell sx={{ p: 0.5 }}>
                                                     <Autocomplete
                                                         options={categories}
-                                                        getOptionLabel={(option) => option.Name || option.name || ''}
-                                                        isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
-                                                        onInputChange={(e, v) => fetchCategories(v)}
+                                                        loading={loadingCategories}
+                                                        value={row.category}
+                                                        getOptionLabel={(option) => categoryOptionLabel(option)}
+                                                        renderOption={(props, option) => {
+                                                            const name = option?.Name || option?.name || option?.Categoryname || option?.categoryname || '';
+                                                            const acc = option?.Acc_type || option?.acc_type || option?.Accounttype || option?.accounttype || '';
+                                                            return renderOptionWithMeta(props, name || categoryOptionLabel(option), acc ? `Type: ${acc}` : '');
+                                                        }}
+                                                        isOptionEqualToValue={(option, value) => {
+                                                            if (!option || !value) return false;
+                                                            const o = option.Id ?? option.id;
+                                                            const v = value.Id ?? value.id ?? value.Categoryid ?? value.categoryid;
+                                                            return o != null && v != null && String(o) === String(v);
+                                                        }}
+                                                        onOpen={() => { if (categories.length === 0) fetchCategories(); }}
                                                         onChange={(e, v) => handleCategoryRowChange(index, 'category', v)}
                                                         renderInput={(params) => <TextField {...params} size="small" sx={{ bgcolor: 'white' }} />}
                                                     />
@@ -708,9 +1334,21 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                             <Typography variant="caption" fontWeight={800} color="primary">CATEGORY {index + 1}</Typography>
                                             <Autocomplete
                                                 options={categories}
-                                                getOptionLabel={(option) => option.Name || option.name || ''}
-                                                isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
-                                                onInputChange={(e, v) => fetchCategories(v)}
+                                                loading={loadingCategories}
+                                                value={row.category}
+                                                getOptionLabel={(option) => categoryOptionLabel(option)}
+                                                renderOption={(props, option) => {
+                                                    const name = option?.Name || option?.name || option?.Categoryname || option?.categoryname || '';
+                                                    const acc = option?.Acc_type || option?.acc_type || option?.Accounttype || option?.accounttype || '';
+                                                    return renderOptionWithMeta(props, name || categoryOptionLabel(option), acc ? `Type: ${acc}` : '');
+                                                }}
+                                                isOptionEqualToValue={(option, value) => {
+                                                    if (!option || !value) return false;
+                                                    const o = option.Id ?? option.id;
+                                                    const v = value.Id ?? value.id ?? value.Categoryid ?? value.categoryid;
+                                                    return o != null && v != null && String(o) === String(v);
+                                                }}
+                                                onOpen={() => { if (categories.length === 0) fetchCategories(); }}
                                                 onChange={(e, v) => handleCategoryRowChange(index, 'category', v)}
                                                 renderInput={(params) => <TextField {...params} label="Category" size="small" sx={{ bgcolor: 'white' }} />}
                                             />
@@ -761,15 +1399,81 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                 <TableCell sx={{ p: 0.5 }}>
                                                     <Autocomplete
                                                         options={products}
-                                                        getOptionLabel={(option) => option.Itemname || option.itemname || option.Productname || option.productname || ''}
+                                                        getOptionLabel={(option) => {
+                                                            const name = option.Itemname || option.itemname || option.Productname || option.productname || '';
+                                                            const type = option.Type || option.type || '';
+                                                            return type ? `${name} (${type})` : name;
+                                                        }}
+                                                        slotProps={{
+                                                            popper: { sx: { minWidth: { xs: '92vw', md: 560 } } },
+                                                            paper: { sx: { minWidth: { xs: '92vw', md: 560 } } }
+                                                        }}
+                                                        renderOption={(props, option) => {
+                                                            const name = option?.Itemname || option?.itemname || option?.Productname || option?.productname || '';
+                                                            const type = option?.Type || option?.type || '';
+                                                            const allvalues = option?.allvalues || option?.Allvalues || '';
+                                                            const { key, ...rest } = props;
+                                                            return (
+                                                                <li key={key} {...rest}>
+                                                                    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1.5, width: '100%' }}>
+                                                                        <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                                            <Typography sx={{ fontWeight: 800, color: '#0f172a', lineHeight: 1.2, fontSize: '0.92rem', whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' }}>
+                                                                                {name}
+                                                                            </Typography>
+                                                                            {(allvalues || type) ? (
+                                                                                <Typography variant="caption" sx={{ color: '#64748b', lineHeight: 1.2, display: 'block', mt: 0.25, whiteSpace: 'normal' }}>
+                                                                                    {allvalues || ' '}
+                                                                                </Typography>
+                                                                            ) : null}
+                                                                        </Box>
+                                                                        {type ? (
+                                                                            <Chip
+                                                                                label={type}
+                                                                                size="small"
+                                                                                sx={{
+                                                                                    height: 22,
+                                                                                    fontWeight: 800,
+                                                                                    bgcolor: type === 'Item' ? '#e0f2fe' : (type === 'Set' ? '#ede9fe' : '#dcfce7'),
+                                                                                    color: '#0f172a'
+                                                                                }}
+                                                                            />
+                                                                        ) : null}
+                                                                    </Box>
+                                                                </li>
+                                                            );
+                                                        }}
                                                         isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
                                                         onInputChange={(e, v) => fetchProducts(v)}
                                                         onChange={(e, v) => handleItemRowChange(index, 'product', v)}
-                                                        renderInput={(params) => <TextField {...params} placeholder="Search..." size="small" sx={{ bgcolor: 'white' }} />}
+                                                        renderInput={(params) => (
+                                                            <TextField
+                                                                {...params}
+                                                                placeholder="Search..."
+                                                                size="small"
+                                                                sx={{ bgcolor: 'white' }}
+                                                                inputProps={{
+                                                                    ...params.inputProps,
+                                                                    title: (() => {
+                                                                        const opt = row.product;
+                                                                        const name = opt?.Itemname || opt?.itemname || opt?.Productname || opt?.productname || '';
+                                                                        const type = opt?.Type || opt?.type || '';
+                                                                        return type ? `${name} (${type})` : name;
+                                                                    })()
+                                                                }}
+                                                            />
+                                                        )}
                                                     />
                                                 </TableCell>
                                                 <TableCell sx={{ p: 0.5 }}>
-                                                    <TextField fullWidth size="small" type="number" value={row.qty} onChange={(e) => handleItemRowChange(index, 'qty', e.target.value)} sx={{ bgcolor: 'white' }} />
+                                                    <TextField
+                                                        fullWidth
+                                                        size="small"
+                                                        type="number"
+                                                        placeholder="Qty"
+                                                        value={row.qty ?? ''}
+                                                        onChange={(e) => handleItemRowChange(index, 'qty', e.target.value)}
+                                                        sx={{ bgcolor: 'white' }}
+                                                    />
                                                 </TableCell>
                                                 <TableCell sx={{ p: 0.5 }}>
                                                     <TextField fullWidth size="small" type="number" value={row.amount} onChange={(e) => handleItemRowChange(index, 'amount', e.target.value)} sx={{ bgcolor: 'white' }} />
@@ -797,14 +1501,81 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                             <Typography variant="caption" fontWeight={800} color="secondary">ITEM {index + 1}</Typography>
                                             <Autocomplete
                                                 options={products}
-                                                getOptionLabel={(option) => option.Itemname || option.itemname || option.Productname || option.productname || ''}
+                                                getOptionLabel={(option) => {
+                                                    const name = option.Itemname || option.itemname || option.Productname || option.productname || '';
+                                                    const type = option.Type || option.type || '';
+                                                    return type ? `${name} (${type})` : name;
+                                                }}
+                                                slotProps={{
+                                                    popper: { sx: { minWidth: { xs: '92vw', md: 560 } } },
+                                                    paper: { sx: { minWidth: { xs: '92vw', md: 560 } } }
+                                                }}
+                                                renderOption={(props, option) => {
+                                                    const name = option?.Itemname || option?.itemname || option?.Productname || option?.productname || '';
+                                                    const type = option?.Type || option?.type || '';
+                                                    const allvalues = option?.allvalues || option?.Allvalues || '';
+                                                    const { key, ...rest } = props;
+                                                    return (
+                                                        <li key={key} {...rest}>
+                                                            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1.5, width: '100%' }}>
+                                                                <Box sx={{ minWidth: 0, flex: 1 }}>
+                                                                    <Typography sx={{ fontWeight: 800, color: '#0f172a', lineHeight: 1.2, fontSize: '0.92rem', whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' }}>
+                                                                        {name}
+                                                                    </Typography>
+                                                                    {(allvalues || type) ? (
+                                                                        <Typography variant="caption" sx={{ color: '#64748b', lineHeight: 1.2, display: 'block', mt: 0.25, whiteSpace: 'normal' }}>
+                                                                            {allvalues || ' '}
+                                                                        </Typography>
+                                                                    ) : null}
+                                                                </Box>
+                                                                {type ? (
+                                                                    <Chip
+                                                                        label={type}
+                                                                        size="small"
+                                                                        sx={{
+                                                                            height: 22,
+                                                                            fontWeight: 800,
+                                                                            bgcolor: type === 'Item' ? '#e0f2fe' : (type === 'Set' ? '#ede9fe' : '#dcfce7'),
+                                                                            color: '#0f172a'
+                                                                        }}
+                                                                    />
+                                                                ) : null}
+                                                            </Box>
+                                                        </li>
+                                                    );
+                                                }}
                                                 isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
                                                 onInputChange={(e, v) => fetchProducts(v)}
                                                 onChange={(e, v) => handleItemRowChange(index, 'product', v)}
-                                                renderInput={(params) => <TextField {...params} label="Item" placeholder="Search..." size="small" sx={{ bgcolor: 'white' }} />}
+                                                renderInput={(params) => (
+                                                    <TextField
+                                                        {...params}
+                                                        label="Item"
+                                                        placeholder="Search..."
+                                                        size="small"
+                                                        sx={{ bgcolor: 'white' }}
+                                                        inputProps={{
+                                                            ...params.inputProps,
+                                                            title: (() => {
+                                                                const opt = row.product;
+                                                                const name = opt?.Itemname || opt?.itemname || opt?.Productname || opt?.productname || '';
+                                                                const type = opt?.Type || opt?.type || '';
+                                                                return type ? `${name} (${type})` : name;
+                                                            })()
+                                                        }}
+                                                    />
+                                                )}
                                             />
                                             <Stack direction="row" spacing={2}>
-                                                <TextField label="Qty" fullWidth size="small" type="number" value={row.qty} onChange={(e) => handleItemRowChange(index, 'qty', e.target.value)} />
+                                                <TextField
+                                                    label="Qty"
+                                                    placeholder="Qty"
+                                                    fullWidth
+                                                    size="small"
+                                                    type="number"
+                                                    value={row.qty ?? ''}
+                                                    onChange={(e) => handleItemRowChange(index, 'qty', e.target.value)}
+                                                />
                                                 <TextField label="Amount" fullWidth size="small" type="number" value={row.amount} onChange={(e) => handleItemRowChange(index, 'amount', e.target.value)} />
                                             </Stack>
                                             <Select label="VAT" fullWidth size="small" value={row.vat} onChange={(e) => handleItemRowChange(index, 'vat', e.target.value)}>
@@ -844,22 +1615,93 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
 
                     {/* RIGHT: Totals */}
                     <Box sx={{ flex: '0 0 30%', maxWidth: { md: '30%' }, ml: { md: 'auto' } }}>
-                        <Paper sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0', bgcolor: 'white' }}>
-                            <Stack spacing={1}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2" color="text.secondary" fontWeight={500}>Sub Total</Typography>
-                                    <Typography variant="body2" fontWeight={700}>AED {totals.subTotal}</Typography>
-                                </Box>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2" color="text.secondary" fontWeight={500}>VAT Total</Typography>
-                                    <Typography variant="body2" fontWeight={700}>AED {totals.totalTax}</Typography>
-                                </Box>
-                                <Divider sx={{ my: 0.5 }} />
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2" fontWeight={800}>Grand Total</Typography>
-                                    <Typography variant="body2" fontWeight={800} color="error.main">AED {totals.grandTotal}</Typography>
-                                </Box>
-                            </Stack>
+                        <Paper
+                            sx={{
+                                p: 2,
+                                borderRadius: 2,
+                                border: '1px solid #e2e8f0',
+                                bgcolor: 'white',
+                            }}
+                        >
+                            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 240px', columnGap: 2, rowGap: 1.25, alignItems: 'center' }}>
+                                <Typography sx={{ fontWeight: 800, fontSize: '0.85rem', textAlign: 'right' }}>Sub Total</Typography>
+                                <TextField
+                                    value={(billData.amountsAre === 'Inclusive' || billData.amountsAre === 'Inclusive of tax') ? totals.grandTotal : totals.subTotal}
+                                    size="small"
+                                    inputProps={{ readOnly: true, style: { textAlign: 'right', fontWeight: 800 } }}
+                                    sx={{ bgcolor: '#f3f4f6', borderRadius: 2, '& .MuiOutlinedInput-root': { bgcolor: '#f3f4f6' } }}
+                                />
+
+                                <Select
+                                    displayEmpty
+                                    value={billData.discountType || ''}
+                                    size="small"
+                                    onChange={(e) => {
+                                        const nextType = e.target.value;
+                                        setBillData(prev => ({
+                                            ...prev,
+                                            discountType: nextType,
+                                            discountValue: nextType ? prev.discountValue : 0
+                                        }));
+                                    }}
+                                    sx={{ borderRadius: 2 }}
+                                >
+                                    <MenuItem value="">Select Discount</MenuItem>
+                                    <MenuItem value="Discount Value">Discount Value</MenuItem>
+                                    <MenuItem value="Discount Percentage">Discount Percentage</MenuItem>
+                                </Select>
+                                <TextField
+                                    value={billData.discountValue ?? 0}
+                                    size="small"
+                                    type="number"
+                                    onChange={(e) => setBillData(prev => ({ ...prev, discountValue: e.target.value }))}
+                                    disabled={!billData.discountType}
+                                    inputProps={{ style: { textAlign: 'right' } }}
+                                    sx={{ bgcolor: 'white', borderRadius: 2 }}
+                                />
+
+                                <Typography sx={{ fontWeight: 800, fontSize: '0.85rem', textAlign: 'right' }}>Discount</Typography>
+                                <TextField
+                                    value={`-${Math.abs(Number(billData.discountAmount || 0)).toFixed(2)}`}
+                                    size="small"
+                                    inputProps={{ readOnly: true, style: { textAlign: 'right', fontWeight: 800, color: '#64748b' } }}
+                                    sx={{ bgcolor: '#f3f4f6', borderRadius: 2, '& .MuiOutlinedInput-root': { bgcolor: '#f3f4f6' } }}
+                                />
+
+                                {(billData.amountsAre !== 'Outofscope' && billData.amountsAre !== 'Out of scope of tax' && pricingSummary.vatLines.length > 0) ? (
+                                    pricingSummary.vatLines.map((v) => (
+                                        <React.Fragment key={String(v.rate)}>
+                                            <Typography sx={{ fontWeight: 800, fontSize: '0.85rem', textAlign: 'right' }}>
+                                                Vat @{v.rate}% on {v.base.toFixed(2)}
+                                            </Typography>
+                                            <TextField
+                                                value={v.tax.toFixed(2)}
+                                                size="small"
+                                                inputProps={{ readOnly: true, style: { textAlign: 'right', fontWeight: 800 } }}
+                                                sx={{ bgcolor: '#f3f4f6', borderRadius: 2, '& .MuiOutlinedInput-root': { bgcolor: '#f3f4f6' } }}
+                                            />
+                                        </React.Fragment>
+                                    ))
+                                ) : (billData.amountsAre !== 'Outofscope' && billData.amountsAre !== 'Out of scope of tax') ? (
+                                    <>
+                                        <Typography sx={{ fontWeight: 800, fontSize: '0.85rem', textAlign: 'right' }}>VAT Total</Typography>
+                                        <TextField
+                                            value={totals.totalTax}
+                                            size="small"
+                                            inputProps={{ readOnly: true, style: { textAlign: 'right', fontWeight: 800 } }}
+                                            sx={{ bgcolor: '#f3f4f6', borderRadius: 2, '& .MuiOutlinedInput-root': { bgcolor: '#f3f4f6' } }}
+                                        />
+                                    </>
+                                ) : null}
+
+                                <Typography sx={{ fontWeight: 900, fontSize: '0.95rem', textAlign: 'right' }}>Grand Total</Typography>
+                                <TextField
+                                    value={totals.grandTotal}
+                                    size="small"
+                                    inputProps={{ readOnly: true, style: { textAlign: 'right', fontWeight: 900 } }}
+                                    sx={{ bgcolor: '#f3f4f6', borderRadius: 2, '& .MuiOutlinedInput-root': { bgcolor: '#f3f4f6' } }}
+                                />
+                            </Box>
                         </Paper>
                     </Box>
 
@@ -867,8 +1709,21 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
 
 
 
-                <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, p: 2, bgcolor: 'white', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: 2, zIndex: 1000 }}>
-                    <Button variant="outlined" startIcon={<CloseIcon />} onClick={onBack} sx={{ borderRadius: 2 }}>Close</Button>
+                <Paper
+                    sx={{
+                        position: 'sticky',
+                        bottom: 0,
+                        p: 2,
+                        bgcolor: 'white',
+                        borderTop: '1px solid #e2e8f0',
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: 2,
+                        zIndex: 1200,
+                        mt: 3
+                    }}
+                >
+                    <Button variant="outlined" startIcon={<CloseIcon />} onClick={handleClose} sx={{ borderRadius: 2 }}>Close</Button>
                     <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} color="error" sx={{ borderRadius: 2, px: 4 }}>Save</Button>
                 </Paper>
             </Box>

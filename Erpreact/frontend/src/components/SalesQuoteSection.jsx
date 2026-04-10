@@ -46,7 +46,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
     const [itemsPerPage, setItemsPerPage] = useState(10);
     // activeFilter: 'all' | 'pending' | 'approved'
     const [activeFilter, setActiveFilter] = useState('pending');
-    // Date range for approved filter (empty = last 30 days)
+    // Date range for "all" and "approved" filters (empty = last 30 days)
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
 
@@ -99,13 +99,85 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
         });
     };
 
+    const getCurrentUserId = () => {
+        const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+        try {
+            const u = userStr ? JSON.parse(userStr) : {};
+            return String(u?.Userid || u?.userid || u?.UserId || u?.userId || u?.id || u?.Id || '').trim();
+        } catch {
+            return '';
+        }
+    };
+
+    const handleEditClick = async (id) => {
+        const userid = getCurrentUserId();
+        try {
+            const res = await fetch(`${API_URL}/api/salesquote/details/${encodeURIComponent(String(id))}`);
+            const data = await res.json().catch(() => ({}));
+            const head = data?.header || data?.Header || null;
+            if (!res.ok || !data?.success || !head) {
+                Swal.fire('Error', data?.message || 'Failed to fetch quote details', 'error');
+                return;
+            }
+
+            const owner = String(head.Userid || head.userid || '').trim();
+            const status = String(head.Status || head.status || '').trim();
+
+            if (!userid || !owner || userid.toLowerCase() !== owner.toLowerCase()) {
+                Swal.fire('Cancelled', 'Editing is not possible', 'error');
+                return;
+            }
+
+            if (['approved', 'rejected', 'converted'].includes(status.toLowerCase())) {
+                const result = await Swal.fire({
+                    title: 'Updating is not possible. Already approved/rejected/converted.',
+                    text: 'Do you want to send edit request?',
+                    icon: 'info',
+                    input: 'textarea',
+                    inputLabel: 'Reason',
+                    inputPlaceholder: 'Enter reason...',
+                    showCancelButton: true,
+                    confirmButtonText: 'Yes'
+                });
+                if (!result.isConfirmed) {
+                    Swal.fire('Cancelled', 'Your Data is safe', 'error');
+                    return;
+                }
+
+                const reason = String(result.value || '').trim();
+                const send = await fetch(`${API_URL}/api/salesquote/editrequest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: String(id), userid, reason })
+                });
+                const resp = await send.json().catch(() => ({}));
+                if (send.ok && resp?.success) {
+                    Swal.fire('Success', resp?.message || 'Edit request sent', 'success');
+                    fetchQuotes();
+                } else {
+                    Swal.fire('Info', resp?.message || 'Unable to send edit request', 'info');
+                }
+                return;
+            }
+
+            if (status.toLowerCase() === 'edit request sent') {
+                Swal.fire('Info', 'Already sent the edit request. Waiting for manager approval', 'info');
+                return;
+            }
+
+            onEditQuote(id);
+        } catch (e) {
+            Swal.fire('Error', 'Network error', 'error');
+        }
+    };
+
     const PENDING_STATUSES = ['draft', 'active'];
     const APPROVED_STATUSES = ['approved', 'converted'];
 
     const pendingCount = allQuotes.filter(q => PENDING_STATUSES.includes((q.status || '').toLowerCase())).length;
     const approvedCount = allQuotes.filter(q => APPROVED_STATUSES.includes((q.status || '').toLowerCase())).length;
 
-    // ── Approved: last-30-days logic ──
+    // ── Last-30-days logic (default) ──
     const today = new Date(); today.setHours(23, 59, 59, 999);
     const thirtyAgo = new Date(); thirtyAgo.setDate(thirtyAgo.getDate() - 30); thirtyAgo.setHours(0, 0, 0, 0);
 
@@ -121,7 +193,15 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                 const to = dateTo ? new Date(dateTo + 'T23:59:59') : today;
                 return qDate >= from && qDate <= to;
             })
-            : allQuotes;
+            : activeFilter === 'all'
+                ? allQuotes.filter(q => {
+                    const qDate = q.date ? new Date(q.date) : null;
+                    if (!qDate) return false;
+                    const from = dateFrom ? new Date(dateFrom + 'T00:00:00') : thirtyAgo;
+                    const to = dateTo ? new Date(dateTo + 'T23:59:59') : today;
+                    return qDate >= from && qDate <= to;
+                })
+                : allQuotes;
 
     // Then filter by search
     const filteredQuotes = byFilter.filter(q =>
@@ -251,9 +331,9 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                         </Stack>
 
 
-                        {/* Right: date range (approved only) + search + refresh */}
+                        {/* Right: date range (all/approved) + search + refresh */}
                         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
-                            {activeFilter === 'approved' && (
+                            {(activeFilter === 'approved' || activeFilter === 'all') && (
                                 <>
                                     <DatePicker
                                         label="From"
@@ -295,10 +375,10 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                                 }}
                                 sx={{ width: 240, '& .MuiOutlinedInput-root': { borderRadius: 2, height: 40, bgcolor: 'white' } }}
                             />
-                            <Tooltip title={activeFilter === 'approved' && (dateFrom || dateTo) ? 'Clear dates & Refresh' : 'Refresh'}>
+                            <Tooltip title={(activeFilter === 'approved' || activeFilter === 'all') && (dateFrom || dateTo) ? 'Clear dates & Refresh' : 'Refresh'}>
                                 <IconButton
                                     onClick={() => {
-                                        if (activeFilter === 'approved') {
+                                        if (activeFilter === 'approved' || activeFilter === 'all') {
                                             setDateFrom('');
                                             setDateTo('');
                                             setCurrentPage(1);
@@ -308,8 +388,8 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                                     sx={{
                                         border: '1px solid #e2e8f0',
                                         borderRadius: 2,
-                                        color: (activeFilter === 'approved' && (dateFrom || dateTo)) ? '#cc3d3e' : '#64748b',
-                                        bgcolor: (activeFilter === 'approved' && (dateFrom || dateTo)) ? '#fef2f2' : 'white',
+                                        color: ((activeFilter === 'approved' || activeFilter === 'all') && (dateFrom || dateTo)) ? '#cc3d3e' : '#64748b',
+                                        bgcolor: ((activeFilter === 'approved' || activeFilter === 'all') && (dateFrom || dateTo)) ? '#fef2f2' : 'white',
                                         '&:hover': { bgcolor: '#f8fafc' }
                                     }}
                                 >
@@ -318,8 +398,8 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                             </Tooltip>
                         </Stack>
                     </Stack>
-                    {/* Approved hint */}
-                    {activeFilter === 'approved' && !dateFrom && !dateTo && (
+                    {/* Last-30-days hint */}
+                    {(activeFilter === 'approved' || activeFilter === 'all') && !dateFrom && !dateTo && (
                         <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block', fontStyle: 'italic', pl: 0.5 }}>
                             📅 Showing last <strong>30 days</strong> records. Use the date pickers above to search older records.
                         </Typography>
@@ -354,9 +434,12 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                             ) : (
                                 currentItems.map((quote) => {
                                     const sc = statusColor(quote.status);
+                                    const quoteNoText = (quote.status || '').toLowerCase() === 'draft'
+                                        ? 'Draft'
+                                        : (quote.quoteNo || 'Draft');
                                     return (
                                         <TableRow key={quote.id} hover sx={{ '&:last-child td': { border: 0 } }}>
-                                            <TableCell sx={{ fontWeight: 600, color: '#002b5c' }}>{quote.quoteNo}</TableCell>
+                                            <TableCell sx={{ fontWeight: 600, color: '#002b5c' }}>{quoteNoText}</TableCell>
                                             <TableCell>
                                                 <Typography variant="body2" fontWeight={600} color="#1e293b">{quote.customer}</Typography>
                                             </TableCell>
@@ -374,7 +457,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                                                         </IconButton>
                                                     </Tooltip>
                                                     <Tooltip title="Edit">
-                                                        <IconButton size="small" onClick={() => onEditQuote(quote.id)} sx={{ color: '#10b981', bgcolor: '#ecfdf5', '&:hover': { bgcolor: '#d1fae5' } }}>
+                                                        <IconButton size="small" onClick={() => handleEditClick(quote.id)} sx={{ color: '#10b981', bgcolor: '#ecfdf5', '&:hover': { bgcolor: '#d1fae5' } }}>
                                                             <EditIcon fontSize="small" />
                                                         </IconButton>
                                                     </Tooltip>
@@ -408,6 +491,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                     />
                 )}
             </Paper>
+
         </Box>
     );
 };

@@ -50,7 +50,14 @@ const ComboApprovalSection = ({ onNavigate }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [message, setMessage] = useState({ type: '', text: '' });
     const [showModal, setShowModal] = useState(false);
-    const [modalData, setModalData] = useState({ comboId: '', status: '', comments: '' });
+    const [modalData, setModalData] = useState({
+        comboId: '',
+        status: '',
+        comments: '',
+        submitterUserid: '',
+        comboname: '',
+        firstname: ''
+    });
 
     const [showView, setShowView] = useState(false);
     const [viewLoading, setViewLoading] = useState(false);
@@ -63,7 +70,30 @@ const ComboApprovalSection = ({ onNavigate }) => {
         marketplaces: []
     });
 
-    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    const user = (() => {
+        const userStr = localStorage.getItem('user') || sessionStorage.getItem('user') || '{}';
+        try { return JSON.parse(userStr); } catch { return {}; }
+    })();
+
+    const resolveUserId = (u) => {
+        if (!u || typeof u !== 'object') return '';
+        // direct common keys
+        const direct =
+            u.Userid ?? u.userid ?? u.UserId ?? u.userId ?? u.UserID ?? u.USERID ?? u.Id ?? u.id ?? u.ID;
+        if (direct !== undefined && direct !== null && String(direct).trim() !== '') return String(direct).trim();
+
+        // case-insensitive scan for keys like "userid"
+        const keys = Object.keys(u);
+        const hit = keys.find((k) => k && k.toLowerCase().replace(/\s+/g, '') === 'userid');
+        if (hit) {
+            const v = u[hit];
+            if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+        }
+
+        // sometimes user is nested
+        if (u.user && typeof u.user === 'object') return resolveUserId(u.user);
+        return '';
+    };
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
     const navigate = useNavigate();
     const theme = useTheme();
@@ -103,7 +133,19 @@ const ComboApprovalSection = ({ onNavigate }) => {
     }, [currentPage, itemsPerPage, searchTerm, catelogid]);
 
     const openModal = (combo, status) => {
-        setModalData({ comboId: String(combo.Id || combo.id || ''), status, comments: '' });
+        const uname = combo.Username || combo.username || '';
+        const first =
+            (combo.Firstname || combo.firstname || (typeof uname === 'string' ? uname.split(/\s+/)[0] : '') || '').trim();
+        setModalData({
+            comboId: String(combo.Id || combo.id || ''),
+            status,
+            comments: '',
+            submitterUserid: String(combo.Userid || combo.userid || ''),
+            comboname: String(
+                combo.Comboname || combo.comboname || combo.Itemname || combo.itemname || combo.Productname || ''
+            ),
+            firstname: first
+        });
         setShowModal(true);
     };
 
@@ -150,6 +192,11 @@ const ComboApprovalSection = ({ onNavigate }) => {
     const submitDecision = async () => {
         setLoading(true);
         try {
+            const approverId = resolveUserId(user);
+            if (!approverId) {
+                setMessage({ type: 'error', text: 'User id missing. Please logout and login again.' });
+                return;
+            }
             const res = await fetch(`${API_URL}/api/combo/response`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -157,7 +204,10 @@ const ComboApprovalSection = ({ onNavigate }) => {
                     Id: modalData.comboId,
                     Status: modalData.status,
                     Comments: modalData.comments || '',
-                    Approved_Userid: String(user.Userid || user.userid || user.id || user.Id || '')
+                    Approved_Userid: approverId,
+                    Userid: modalData.submitterUserid,
+                    Comboname: modalData.comboname,
+                    Firstname: modalData.firstname
                 })
             });
             const data = await res.json().catch(() => ({}));

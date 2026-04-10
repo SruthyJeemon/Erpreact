@@ -195,6 +195,29 @@ OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
                 var comboCommentsTable = BuildQualifiedName(tableInfo.Value.Schema, tableInfo.Value.Table);
 
+                // Read current row (we need Productcomboid + type to update combo workstatus/isdelete like legacy Savecomboeditrequest).
+                string productcomboid = "";
+                string commenttype = "";
+                string existingComments = "";
+                {
+                    var readSql = $@"
+SELECT TOP 1
+    ISNULL(CONVERT(varchar(50), Productcomboid), '') AS Productcomboid,
+    ISNULL(CONVERT(nvarchar(100), Commenttype), '') AS Commenttype,
+    ISNULL(CONVERT(nvarchar(max), Comments), '') AS Comments
+FROM {comboCommentsTable}
+WHERE Id = @CommentId;";
+                    await using var readCmd = new SqlCommand(readSql, con);
+                    readCmd.Parameters.AddWithValue("@CommentId", payload.CommentId);
+                    await using var rr = await readCmd.ExecuteReaderAsync();
+                    if (await rr.ReadAsync())
+                    {
+                        productcomboid = rr.IsDBNull(0) ? "" : rr.GetString(0);
+                        commenttype = rr.IsDBNull(1) ? "" : rr.GetString(1);
+                        existingComments = rr.IsDBNull(2) ? "" : rr.GetString(2);
+                    }
+                }
+
                 var sql = $@"
 UPDATE {comboCommentsTable}
 SET
@@ -221,12 +244,107 @@ SELECT @@ROWCOUNT;";
                 if (affected <= 0)
                     return NotFound(new { success = false, message = "Request not found." });
 
+                // Legacy behavior: if Approved, move combo back to Pending (Workstatus=0) so editing is allowed.
+                // If Rejected, keep combo as Rejected (Workstatus=2).
+                // Also, for delete requests: if Approved, set Isdelete=1 (same as MVC).
+                try
+                {
+                    bool isApproved = status == "1";
+
+                    // Determine original request type.
+                    // - Legacy edit request uses Commenttype='Editrequest'
+                    // - Legacy delete request uses Commenttype='Deleterequest'
+                    // - Current UI sometimes stores Commenttype='Deleterequest' but prefixes comment with "[EDIT REQUEST]"
+                    string ct = (commenttype ?? "").Trim();
+                    bool isDeleteRequest = ct.Equals("Deleterequest", StringComparison.OrdinalIgnoreCase)
+                        && !(existingComments ?? "").Contains("[EDIT REQUEST]", StringComparison.OrdinalIgnoreCase);
+
+                    string isdeleteParam = (isApproved && isDeleteRequest) ? "1" : "0";
+                    string workstatusParam = isApproved ? "0" : "2";
+
+                    if (!string.IsNullOrWhiteSpace(productcomboid))
+                    {
+                        await using var cmd212 = new SqlCommand("Sp_productcombo", con);
+                        cmd212.CommandType = CommandType.StoredProcedure;
+                        cmd212.Parameters.AddWithValue("@Id", productcomboid.Trim());
+                        cmd212.Parameters.AddWithValue("@Userid", "");
+                        cmd212.Parameters.AddWithValue("@Comboname", "");
+                        cmd212.Parameters.AddWithValue("@Modelno", "");
+                        cmd212.Parameters.AddWithValue("@Batchno", "");
+                        cmd212.Parameters.AddWithValue("@EANBarcodeno", "");
+                        cmd212.Parameters.AddWithValue("@Isdelete", isdeleteParam);
+                        cmd212.Parameters.AddWithValue("@Status", "");
+                        cmd212.Parameters.AddWithValue("@Workstatus", workstatusParam);
+                        cmd212.Parameters.AddWithValue("@Description", "");
+                        cmd212.Parameters.AddWithValue("@Wholesalepriceset", "");
+                        cmd212.Parameters.AddWithValue("@Retailpriceset", "");
+                        cmd212.Parameters.AddWithValue("@Onlinepriceset", "");
+                        cmd212.Parameters.AddWithValue("@Query", 6);
+                        await cmd212.ExecuteNonQueryAsync();
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    Console.WriteLine("ComboEditRequestController.Process Sp_productcombo Q6: " + ex2.Message);
+                }
+
                 return Ok(new { success = true, message = status == "1" ? "Edit request approved." : "Edit request rejected." });
             }
             catch (Exception ex)
             {
                 Console.WriteLine("ComboEditRequestController.Process: " + ex);
                 return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Used by Combo "Edit" button: if a manager already approved an edit request for this combo+user,
+        /// UI should allow editing without asking to submit another request.
+        /// </summary>
+        [HttpGet("approved")]
+        public async Task<IActionResult> HasApprovedEditRequest([FromQuery] string comboId, [FromQuery] string userid)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(comboId) || string.IsNullOrWhiteSpace(userid))
+                    return BadRequest(new { success = false, message = "comboId and userid are required", approved = false });
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                await using var con = new SqlConnection(connectionString);
+                await con.OpenAsync();
+
+                var tableInfo = await ResolveComboCommentsTableAsync(con);
+                if (tableInfo == null)
+                    return StatusCode(500, new { success = false, message = "Combo comments table not found in this database.", approved = false });
+
+                var comboCommentsTable = BuildQualifiedName(tableInfo.Value.Schema, tableInfo.Value.Table);
+
+                // Approved means Status='1' on an edit-request row.
+                // We accept either Commenttype='Editrequest' (legacy) or comments marker "[EDIT REQUEST]" (current UI).
+                // We only need existence of an approved row for this combo+user.
+                var sql = $@"
+SELECT TOP 1 1
+FROM {comboCommentsTable} cc
+WHERE LTRIM(RTRIM(ISNULL(cc.Productcomboid,''))) = LTRIM(RTRIM(@ComboId))
+  AND LTRIM(RTRIM(ISNULL(cc.Userid,''))) = LTRIM(RTRIM(@Userid))
+  AND LTRIM(RTRIM(ISNULL(cc.Status,''))) = '1'
+  AND (
+        LTRIM(RTRIM(ISNULL(cc.Commenttype,''))) IN ('Editrequest','Editrequestreplay','Editrequestreplay ')
+     OR ISNULL(cc.Comments,'') LIKE '%[EDIT REQUEST]%'
+  )
+ORDER BY TRY_CONVERT(datetime, cc.Checked_Date) DESC, TRY_CONVERT(int, cc.Id) DESC;";
+
+                await using var cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@ComboId", comboId.Trim());
+                cmd.Parameters.AddWithValue("@Userid", userid.Trim());
+                var exists = await cmd.ExecuteScalarAsync();
+
+                return Ok(new { success = true, approved = exists != null });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("ComboEditRequestController.HasApprovedEditRequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, approved = false });
             }
         }
     }

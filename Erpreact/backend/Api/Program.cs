@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
 using Api.Models;
 using Api.Extensions;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
+using System.Globalization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -2598,7 +2600,22 @@ app.MapGet("/api/salesperson", async (SqlConnection connection) =>
     try
     {
         await connection.OpenAsync();
-        using var command = new SqlCommand("SELECT Id, Salesperson FROM Tbl_Salesperson WHERE ISDELETE = 0 AND Status = 'Active'", connection);
+        // Isdelete/Status are varchar in schema; NULL/'0'/'false' must count as "not deleted".
+        using var command = new SqlCommand("""
+            SELECT Id, Salesperson FROM Tbl_Salesperson
+            WHERE (
+                Isdelete IS NULL
+                OR LTRIM(RTRIM(CAST(Isdelete AS NVARCHAR(50)))) = N''
+                OR LOWER(LTRIM(RTRIM(CAST(Isdelete AS NVARCHAR(50))))) IN (N'0', N'false')
+                OR TRY_CONVERT(int, Isdelete) = 0
+            )
+            AND (
+                Status IS NULL
+                OR LTRIM(RTRIM(CAST(Status AS NVARCHAR(50)))) = N''
+                OR LOWER(LTRIM(RTRIM(CAST(Status AS NVARCHAR(50))))) = N'active'
+            )
+            ORDER BY Salesperson
+            """, connection);
         using var reader = await command.ExecuteReaderAsync();
         var list = new List<object>();
         while (await reader.ReadAsync())
@@ -8021,28 +8038,65 @@ app.MapGet("/api/productvariant/search", async (string? catelogId, string? itemN
     try
     {
         await connection.OpenAsync();
-        
-        using var command = new SqlCommand("Sp_Productvariants", connection)
+
+        // If caller doesn't provide a CatelogId, fall back to "all catalogs" so searches still return results.
+        // (Legacy system used Session["Userid"] to get Catelogid; we don't have that in this API route.)
+        if (string.IsNullOrWhiteSpace(catelogId))
         {
-            CommandType = System.Data.CommandType.StoredProcedure
-        };
-        
-        command.Parameters.AddWithValue("@Catelogid", string.IsNullOrEmpty(catelogId) ? DBNull.Value : catelogId);
-        command.Parameters.AddWithValue("@Itemname", string.IsNullOrEmpty(itemName) ? "%" : "%" + itemName + "%");
-        command.Parameters.AddWithValue("@Query", 36);
-        
-        using var reader = await command.ExecuteReaderAsync();
-        var variants = new List<ProductVariantSearchResult>();
-        
-        while (await reader.ReadAsync())
-        {
-            variants.Add(new ProductVariantSearchResult
+            try
             {
-                id = reader["Id"] != DBNull.Value ? Convert.ToInt32(reader["Id"]) : 0,
-                Itemname = reader["Itemname"]?.ToString() ?? "",
-                allvalues = reader["allvalues"]?.ToString() ?? "",
-                Type = reader["Type"]?.ToString() ?? ""
-            });
+                using var catCmd = new SqlCommand(@"
+                    SELECT STRING_AGG(CAST(Catelogid AS NVARCHAR(50)), ',')
+                    FROM (
+                        SELECT DISTINCT Catelogid
+                        FROM Tbl_Registration
+                        WHERE Catelogid IS NOT NULL AND LTRIM(RTRIM(Catelogid)) <> ''
+                    ) x
+                ", connection);
+                var all = (await catCmd.ExecuteScalarAsync())?.ToString();
+                if (!string.IsNullOrWhiteSpace(all)) catelogId = all;
+            }
+            catch
+            {
+                // ignore - keep catelogId null/empty; SP may still return results depending on DB logic
+            }
+        }
+
+        async Task<List<ProductVariantSearchResult>> RunQuery(int queryNo)
+        {
+            using var command = new SqlCommand("Sp_Productvariants", connection)
+            {
+                CommandType = System.Data.CommandType.StoredProcedure
+            };
+
+            command.Parameters.AddWithValue("@Catelogid", string.IsNullOrEmpty(catelogId) ? "" : catelogId);
+            // Sp_Productvariants @Query=27 uses LIKE '%' + @Itemname + '%', so we pass raw search text (no % wrapping).
+            // @Query=36 expects wildcard string, but passing raw is still ok because the SP often handles it similarly.
+            command.Parameters.AddWithValue("@Itemname", string.IsNullOrEmpty(itemName) ? "" : itemName);
+            command.Parameters.AddWithValue("@Query", queryNo);
+
+            using var reader = await command.ExecuteReaderAsync();
+            var variants = new List<ProductVariantSearchResult>();
+            while (await reader.ReadAsync())
+            {
+                variants.Add(new ProductVariantSearchResult
+                {
+                    id = reader["Id"] != DBNull.Value ? Convert.ToInt32(reader["Id"]) : 0,
+                    Itemname = reader["Itemname"]?.ToString() ?? "",
+                    allvalues = reader["allvalues"]?.ToString() ?? "",
+                    Type = reader["Type"]?.ToString() ?? ""
+                });
+            }
+            return variants;
+        }
+
+        // First: legacy GetOptions behavior (Item/Set/Combo + stock-aware).
+        var variants = await RunQuery(27);
+
+        // Fallback: if nothing found, broaden to query 36 (not stock-locked) so items can still be searchable.
+        if (variants.Count == 0)
+        {
+            variants = await RunQuery(36);
         }
         
         response.Success = true;
@@ -8065,6 +8119,112 @@ app.MapGet("/api/productvariant/search", async (string? catelogId, string? itemN
     return Results.Json(response);
 })
 .WithName("SearchProductVariants")
+.WithOpenApi();
+
+// Item options: search across Item/Set/Combo tables directly
+// Kept outside `/api/salesquote/{id}` route space to avoid 405 collisions.
+app.MapGet("/api/item-options", async (string? q, SqlConnection connection) =>
+{
+    try
+    {
+        await connection.OpenAsync();
+        var search = (q ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(search) || search.Length < 3)
+            return Results.Ok(new { success = true, List1 = Array.Empty<object>() });
+
+        // Unified search across:
+        // - Tbl_Productvariants (Itemname)
+        // - Tbl_Productset (Setname)
+        // - Tbl_Combo (Comboname)
+        // Keep this independent from Catelogid/Inventory so users can find the master data.
+        using var cmd = new SqlCommand(@"
+            DECLARE @q NVARCHAR(200) = @Search;
+
+            ;WITH Items AS (
+                SELECT TOP (60)
+                    p.Id,
+                    p.Itemname,
+                    CAST((
+                        STUFF((
+                            SELECT ', ' + CONVERT(VARCHAR(100), Varianttype) + '-' + CONVERT(VARCHAR(100), Value)
+                            FROM Tbl_Productvariants c
+                            WHERE (c.Parentid = p.Id OR c.Id = p.Id) AND ISNULL(c.Isdelete,0) = 0
+                            FOR XML PATH('')
+                        ), 1, 2, '')
+                    ) AS NVARCHAR(MAX)) AS allvalues,
+                    CAST('Item' AS NVARCHAR(50)) AS Type
+                FROM Tbl_Productvariants p
+                WHERE ISNULL(p.Isdelete,0) = 0
+                  AND ISNULL(p.Parentid,0) = 0
+                  AND ISNULL(p.Status,'') = 'Active'
+                  AND ISNULL(p.Managerapprovestatus,0) = 1
+                  AND p.Itemname LIKE '%' + @q + '%'
+                ORDER BY p.Id DESC
+            ),
+            Sets AS (
+                SELECT TOP (40)
+                    s.Id,
+                    s.Setname AS Itemname,
+                    CONVERT(NVARCHAR(100), s.Numberofpieces) AS allvalues,
+                    CAST('Set' AS NVARCHAR(50)) AS Type
+                FROM Tbl_Productset s
+                WHERE ISNULL(s.Isdelete,0) = 0
+                  AND ISNULL(s.Workstatus,0) = 1
+                  AND s.Setname LIKE '%' + @q + '%'
+                ORDER BY s.Id DESC
+            ),
+            Combos AS (
+                SELECT TOP (40)
+                    c.Id,
+                    c.Comboname AS Itemname,
+                    STUFF((
+                        SELECT ',' + CONVERT(VARCHAR(200), pv.Itemname)
+                        FROM Tbl_Comboitems ci
+                        LEFT JOIN Tbl_Productvariants pv ON ci.Productvariantsid = pv.Id
+                        WHERE ci.Productcomboid = c.Id
+                        FOR XML PATH('')
+                    ), 1, 1, '') AS allvalues,
+                    CAST('Combo' AS NVARCHAR(50)) AS Type
+                FROM Tbl_Combo c
+                WHERE ISNULL(c.Isdelete,0) = 0
+                  AND ISNULL(c.Workstatus,0) = 1
+                  AND c.Comboname LIKE '%' + @q + '%'
+                ORDER BY c.Id DESC
+            )
+            SELECT Id, Itemname, allvalues, Type FROM Items
+            UNION ALL
+            SELECT Id, Itemname, allvalues, Type FROM Sets
+            UNION ALL
+            SELECT Id, Itemname, allvalues, Type FROM Combos;
+        ", connection);
+        cmd.Parameters.AddWithValue("@Search", search);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        var list = new List<object>();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new
+            {
+                Id = reader["Id"] != DBNull.Value ? Convert.ToInt32(reader["Id"]) : 0,
+                Itemname = reader["Itemname"]?.ToString() ?? "",
+                allvalues = reader["allvalues"]?.ToString() ?? "",
+                Type = reader["Type"]?.ToString() ?? ""
+            });
+        }
+
+        return Results.Ok(new { success = true, List1 = list });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: 500, title: "Failed to load item options");
+    }
+    finally
+    {
+        if (connection.State == ConnectionState.Open) await connection.CloseAsync();
+    }
+})
+.WithName("SalesQuoteItemOptions")
 .WithOpenApi();
 
 // Real Product Variant Save Endpoint (handles FormData and inserts into DB)
@@ -11068,18 +11228,34 @@ app.MapGet("/api/salesquote/next-no", async (SqlConnection connection) =>
         var countStr = command.ExecuteScalar()?.ToString();
         int count = int.TryParse(countStr, out int c) ? c : 0;
         
-        string nextNo = $"SQ-{(count + 1).ToString().PadLeft(4, '0')}";
-        
-        using var formatCommand = new SqlCommand("SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete = '0'", connection);
-        using var reader = await formatCommand.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        // Default fallback format (when doc format table is missing): AGT-YYYYMM####.
+        // Matches user's desired pattern like "AGT-202604XXXX".
+        var yearMonth = DateTime.Now.ToString("yyyyMM");
+        string nextNo = $"AGT-{yearMonth}{(count + 1).ToString().PadLeft(4, '0')}";
+
+        // If document format table exists, prefer it.
+        try
         {
-            string prefix = reader["prefix"].ToString() ?? "";
-            string suffix = reader["suffix"].ToString() ?? "";
-            int noOfDigits = Convert.ToInt32(reader["Noofdigit"]);
-            
-            if (noOfDigits > 0)
-                nextNo = $"{prefix}{(count + 1).ToString().PadLeft(noOfDigits, '0')}{suffix}";
+            using var formatCommand = new SqlCommand(
+                "SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete = '0'",
+                connection);
+            using var reader = await formatCommand.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                string prefix = reader["prefix"].ToString() ?? "";
+                string suffix = reader["suffix"].ToString() ?? "";
+                int noOfDigits = Convert.ToInt32(reader["Noofdigit"]);
+
+                if (noOfDigits > 0)
+                    nextNo = $"{prefix}{(count + 1).ToString().PadLeft(noOfDigits, '0')}{suffix}";
+                else
+                    nextNo = $"{prefix}{(count + 1)}{suffix}";
+            }
+        }
+        catch (SqlException ex) when (ex.Number == 208)
+        {
+            // Invalid object name -> keep fallback format
+            Console.WriteLine("Tbl_Salesquotedocumentformat missing; using fallback bill no format.");
         }
         
         return Results.Ok(new { Message = "Success", NextNo = nextNo });
@@ -11102,46 +11278,82 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
             var formDataJson = form["formData"].ToString();
             var tableData1Json = form["tableData1"].ToString();
             var tableDatacategoryJson = form["tableDatacategory"].ToString();
+            var tableDatavatJson = form["tableDatavat"].ToString();
             
             var quoteData = System.Text.Json.JsonSerializer.Deserialize<SalesQuoteFormData>(string.IsNullOrEmpty(formDataJson) ? "{}" : formDataJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new SalesQuoteFormData();
             var itemDetails = string.IsNullOrEmpty(tableData1Json) ? new List<SalesQuoteItemData>() : System.Text.Json.JsonSerializer.Deserialize<List<SalesQuoteItemData>>(tableData1Json, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             var categoryDetails = string.IsNullOrEmpty(tableDatacategoryJson) ? new List<SalesQuoteCategoryData>() : System.Text.Json.JsonSerializer.Deserialize<List<SalesQuoteCategoryData>>(tableDatacategoryJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var vatDetails = string.IsNullOrEmpty(tableDatavatJson)
+                ? new List<SalesQuoteVatData>()
+                : (System.Text.Json.JsonSerializer.Deserialize<List<SalesQuoteVatData>>(tableDatavatJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<SalesQuoteVatData>());
 
             int quoteId = 0;
+
+            // Legacy behavior: when saving as Draft, Salesquoteno should stay "Draft" (no auto-numbering).
+            var normalizedStatus = (quoteData.Status ?? "Draft").Trim();
+            var isDraft = normalizedStatus.Equals("Draft", StringComparison.OrdinalIgnoreCase);
+
+            // Always enforce company TRN if missing.
+            if (string.IsNullOrWhiteSpace(quoteData.Vatnumber))
+                quoteData.Vatnumber = "100509789200003";
 
             using (var cmd = new SqlCommand("SELECT COUNT(Salesquoteno) AS 'Salesquoteno' FROM Tbl_Salesquote", connection, transaction))
             {
                 var countStr = cmd.ExecuteScalar()?.ToString();
                 int pidcount = int.TryParse(countStr, out int c) ? c : 0;
                 
-                using (var getformat = new SqlCommand("SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete='0'", connection, transaction))
+                // Only generate a running number for non-draft records.
+                if (isDraft)
                 {
-                    using (var reader = getformat.ExecuteReader())
+                    quoteData.Salesquoteno = "Draft";
+                }
+                else
+                {
+                    // Prefer document format table if present; otherwise fallback to AGT-YYYYMM####.
+                    try
                     {
-                        if (reader.Read())
+                        using (var getformat = new SqlCommand("SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete='0'", connection, transaction))
                         {
-                            string prefix = reader["prefix"].ToString() ?? "";
-                            string suffix = reader["Suffix"].ToString() ?? "";
-                            int noofdigits = Convert.ToInt32(reader["Noofdigit"]);
-                            
-                            string nextcount = noofdigits > 0 ? (pidcount + 1).ToString().PadLeft(noofdigits, '0') : (pidcount + 1).ToString();
-                            quoteData.Salesquoteno = prefix + nextcount + suffix;
+                            using (var reader = getformat.ExecuteReader())
+                            {
+                                if (reader.Read())
+                                {
+                                    string prefix = reader["prefix"].ToString() ?? "";
+                                    string suffix = reader["Suffix"].ToString() ?? "";
+                                    int noofdigits = Convert.ToInt32(reader["Noofdigit"]);
+
+                                    string nextcount = noofdigits > 0 ? (pidcount + 1).ToString().PadLeft(noofdigits, '0') : (pidcount + 1).ToString();
+                                    quoteData.Salesquoteno = prefix + nextcount + suffix;
+                                }
+                            }
                         }
-                        else
-                        {
-                            quoteData.Salesquoteno = "SQ" + (pidcount + 1).ToString().PadLeft(4, '0');
-                        }
+                    }
+                    catch (SqlException ex) when (ex.Number == 208)
+                    {
+                        // ignore: missing table
+                    }
+
+                    if (string.IsNullOrWhiteSpace(quoteData.Salesquoteno))
+                    {
+                        var ym = DateTime.Now.ToString("yyyyMM");
+                        quoteData.Salesquoteno = $"AGT-{ym}{(pidcount + 1).ToString().PadLeft(4, '0')}";
                     }
                 }
             }
 
+            // Ensure draft always stores Salesquoteno = "Draft" even if client sent a number.
+            if (isDraft) quoteData.Salesquoteno = "Draft";
+
             using (var command = new SqlCommand("Sp_Salesquote", connection, transaction))
             {
+                static string ToDbNumber(decimal? value, string fallback = "0")
+                    => value.HasValue ? value.Value.ToString("0.##", CultureInfo.InvariantCulture) : fallback;
+
                 command.CommandType = CommandType.StoredProcedure;
                 command.Parameters.AddWithValue("@Query", 1);
-                
-                var pId = new SqlParameter("@Id", SqlDbType.Int) { Direction = ParameterDirection.Output };
-                command.Parameters.Add(pId);
+                // Stored procedure returns the new Id via `select @Id as Id` (not OUTPUT param),
+                // so we pass a normal input param and read ExecuteScalar().
+                command.Parameters.AddWithValue("@Id", 0);
                 
                 command.Parameters.AddWithValue("@Userid", quoteData.Userid ?? "Admin");
                 command.Parameters.AddWithValue("@Customerid", string.IsNullOrEmpty(quoteData.Customerid) ? DBNull.Value : quoteData.Customerid);
@@ -11149,33 +11361,49 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                 command.Parameters.AddWithValue("@Duedate", string.IsNullOrEmpty(quoteData.Duedate) ? DBNull.Value : quoteData.Duedate);
                 command.Parameters.AddWithValue("@Salesquoteno", string.IsNullOrEmpty(quoteData.Salesquoteno) ? DBNull.Value : quoteData.Salesquoteno);
                 command.Parameters.AddWithValue("@Amountsare", quoteData.Amountsare ?? "0");
-                command.Parameters.AddWithValue("@Vatnumber", DBNull.Value);
+                command.Parameters.AddWithValue("@Vatnumber", string.IsNullOrEmpty(quoteData.Vatnumber) ? DBNull.Value : quoteData.Vatnumber);
                 command.Parameters.AddWithValue("@Billing_address", string.IsNullOrEmpty(quoteData.Billing_address) ? DBNull.Value : quoteData.Billing_address);
-                command.Parameters.AddWithValue("@Sales_location", DBNull.Value);
-                command.Parameters.AddWithValue("@Sub_total", quoteData.Sub_total ?? "0");
-                command.Parameters.AddWithValue("@Vat", DBNull.Value);
-                command.Parameters.AddWithValue("@Vat_amount", quoteData.Vat_amount ?? "0");
-                command.Parameters.AddWithValue("@Grand_total", quoteData.Grand_total ?? "0");
-                command.Parameters.AddWithValue("@Conversion_amount", 1);
-                command.Parameters.AddWithValue("@Currency_rate", 1);
+                command.Parameters.AddWithValue("@Sales_location", string.IsNullOrEmpty(quoteData.Sales_location) ? DBNull.Value : quoteData.Sales_location);
+                command.Parameters.AddWithValue("@Sub_total", ToDbNumber(quoteData.Sub_total));
+                command.Parameters.AddWithValue("@Vat", string.IsNullOrEmpty(quoteData.Vat) ? DBNull.Value : quoteData.Vat);
+                command.Parameters.AddWithValue("@Vat_amount", ToDbNumber(quoteData.Vat_amount));
+                command.Parameters.AddWithValue("@Grand_total", ToDbNumber(quoteData.Grand_total));
+                command.Parameters.AddWithValue("@Conversion_amount", ToDbNumber(quoteData.Conversion_amount, fallback: "1"));
+                command.Parameters.AddWithValue("@Currency_rate", ToDbNumber(quoteData.Currency_rate, fallback: "1"));
                 command.Parameters.AddWithValue("@Currency", string.IsNullOrEmpty(quoteData.Currency) ? DBNull.Value : quoteData.Currency);
-                command.Parameters.AddWithValue("@Managerapprovestatus", DBNull.Value);
+                command.Parameters.AddWithValue("@Managerapprovestatus", "0");
                 command.Parameters.AddWithValue("@Isdelete", "0");
                 command.Parameters.AddWithValue("@Status", quoteData.Status ?? "Draft");
                 command.Parameters.AddWithValue("@Type", quoteData.Type ?? "Quote");
                 command.Parameters.AddWithValue("@Terms", string.IsNullOrEmpty(quoteData.Terms) ? DBNull.Value : quoteData.Terms);
-                command.Parameters.AddWithValue("@Contact", DBNull.Value);
-                command.Parameters.AddWithValue("@Phoneno", DBNull.Value);
+                command.Parameters.AddWithValue("@Contact", string.IsNullOrEmpty(quoteData.Contact) ? DBNull.Value : quoteData.Contact);
+                command.Parameters.AddWithValue("@Phoneno", string.IsNullOrEmpty(quoteData.Phoneno) ? DBNull.Value : quoteData.Phoneno);
                 command.Parameters.AddWithValue("@Shipping_address", string.IsNullOrEmpty(quoteData.Shipping_address) ? DBNull.Value : quoteData.Shipping_address);
                 command.Parameters.AddWithValue("@Remarks", string.IsNullOrEmpty(quoteData.Remarks) ? DBNull.Value : quoteData.Remarks);
                 command.Parameters.AddWithValue("@Salespersonname", string.IsNullOrEmpty(quoteData.Salespersonname) ? DBNull.Value : quoteData.Salespersonname);
-                command.Parameters.AddWithValue("@Discounttype", DBNull.Value);
-                command.Parameters.AddWithValue("@Discountvalue", DBNull.Value);
-                command.Parameters.AddWithValue("@Discountamount", DBNull.Value);
+                command.Parameters.AddWithValue("@Discounttype", string.IsNullOrEmpty(quoteData.Discounttype) ? DBNull.Value : quoteData.Discounttype);
+                command.Parameters.AddWithValue("@Discountvalue", quoteData.Discountvalue.HasValue ? ToDbNumber(quoteData.Discountvalue) : DBNull.Value);
+                command.Parameters.AddWithValue("@Discountamount", quoteData.Discountamount.HasValue ? ToDbNumber(quoteData.Discountamount) : DBNull.Value);
                 command.Parameters.AddWithValue("@Catelogid", DBNull.Value);
 
-                await command.ExecuteNonQueryAsync();
-                quoteId = (int)pId.Value;
+                var inserted = await command.ExecuteScalarAsync();
+                quoteId = inserted == null ? 0 : Convert.ToInt32(inserted);
+            }
+
+            try
+            {
+                using (var upd = new SqlCommand(
+                    "UPDATE Tbl_Salesquote SET Deliverydate = @Deliverydate WHERE Id = @Id", connection, transaction))
+                {
+                    upd.Parameters.AddWithValue("@Deliverydate",
+                        string.IsNullOrWhiteSpace(quoteData.Deliverydate) ? DBNull.Value : quoteData.Deliverydate);
+                    upd.Parameters.AddWithValue("@Id", quoteId);
+                    await upd.ExecuteNonQueryAsync();
+                }
+            }
+            catch (SqlException ex) when (ex.Number == 207)
+            {
+                Console.WriteLine("Tbl_Salesquote.Deliverydate column missing; run database/add_salesquote_deliverydate.sql");
             }
 
             if (itemDetails != null)
@@ -11186,66 +11414,109 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                     {
                         command.CommandType = CommandType.StoredProcedure;
                         command.Parameters.AddWithValue("@Query", 1);
-                        var pId = new SqlParameter("@Id", SqlDbType.Int) { Direction = ParameterDirection.Output };
-                        command.Parameters.Add(pId);
+                        command.Parameters.AddWithValue("@Id", 0);
                         
                         command.Parameters.AddWithValue("@Userid", quoteData.Userid ?? "Admin");
                         command.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
                         command.Parameters.AddWithValue("@Itemid", string.IsNullOrEmpty(item.Itemid) ? DBNull.Value : item.Itemid);
                         command.Parameters.AddWithValue("@Qty", item.Qty ?? "0");
                         command.Parameters.AddWithValue("@Amount", item.Amount ?? "0");
-                        command.Parameters.AddWithValue("@Vat", item.Vat ?? "0");
+                        // Tbl_Salesquotedetails mapping:
+                        // Vat column should store VatId, Vat_id column should store Vatvalue
+                        command.Parameters.AddWithValue("@Vat", string.IsNullOrEmpty(item.Vat) ? DBNull.Value : item.Vat);
                         command.Parameters.AddWithValue("@Vat_id", string.IsNullOrEmpty(item.Vat_id) ? DBNull.Value : item.Vat_id);
                         command.Parameters.AddWithValue("@Total", item.Total ?? "0");
                         command.Parameters.AddWithValue("@Isdelete", "0");
                         command.Parameters.AddWithValue("@Status", "Active");
                         command.Parameters.AddWithValue("@Type", item.Type ?? "Item");
                         
-                        await command.ExecuteNonQueryAsync();
-                    }
-                }
-            }
-            
-            if (categoryDetails != null)
-            {
-                foreach (var cat in categoryDetails)
-                {
-                    using (var command = new SqlCommand("Sp_Salesquotedetails", connection, transaction))
-                    {
-                        command.CommandType = CommandType.StoredProcedure;
-                        command.Parameters.AddWithValue("@Query", 1);
-                        var pId = new SqlParameter("@Id", SqlDbType.Int) { Direction = ParameterDirection.Output };
-                        command.Parameters.Add(pId);
-                        
-                        command.Parameters.AddWithValue("@Userid", quoteData.Userid ?? "Admin");
-                        command.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
-                        command.Parameters.AddWithValue("@Itemid", string.IsNullOrEmpty(cat.Categoryid) ? DBNull.Value : cat.Categoryid);
-                        command.Parameters.AddWithValue("@Qty", cat.Qty ?? "0");
-                        command.Parameters.AddWithValue("@Amount", cat.Amount ?? "0");
-                        command.Parameters.AddWithValue("@Vat", cat.Vat ?? "0");
-                        command.Parameters.AddWithValue("@Vat_id", string.IsNullOrEmpty(cat.Vat_id) ? DBNull.Value : cat.Vat_id);
-                        command.Parameters.AddWithValue("@Total", cat.Total ?? "0");
-                        command.Parameters.AddWithValue("@Isdelete", "0");
-                        command.Parameters.AddWithValue("@Status", "Active");
-                        command.Parameters.AddWithValue("@Type", "Category");
-                        
-                        await command.ExecuteNonQueryAsync();
+                        await command.ExecuteScalarAsync();
                     }
                 }
             }
 
+            // Legacy concept: save category details into Tbl_Purchasecategorydetails (Type='Salesquote')
+            if (categoryDetails != null)
+            {
+                foreach (var cat in categoryDetails)
+                {
+                    if (string.IsNullOrWhiteSpace(cat.Categoryid)) continue;
+                    using var cmd = new SqlCommand("Sp_Purchasecategorydetails", connection, transaction);
+                    cmd.CommandType = CommandType.StoredProcedure;
+                    cmd.Parameters.AddWithValue("@Id", DBNull.Value);
+                    cmd.Parameters.AddWithValue("@Billid", quoteId.ToString());
+                    cmd.Parameters.AddWithValue("@Customerid", quoteData.Userid ?? "Admin");
+                    cmd.Parameters.AddWithValue("@Type", "Salesquote");
+                    cmd.Parameters.AddWithValue("@Categoryid", cat.Categoryid);
+                    cmd.Parameters.AddWithValue("@Description", cat.Description ?? "");
+                    cmd.Parameters.AddWithValue("@Amount", cat.Amount ?? "0");
+                    // Tbl_Purchasecategorydetails mapping:
+                    // Vatvalue should store Vatvalue (e.g. 5/0), Vatid should store Vat Id (e.g. 1..5)
+                    cmd.Parameters.AddWithValue("@Vatvalue", cat.Vat ?? "0");
+                    cmd.Parameters.AddWithValue("@Vatid", string.IsNullOrWhiteSpace(cat.Vat_id) ? "" : cat.Vat_id);
+                    cmd.Parameters.AddWithValue("@Total", cat.Total ?? "0");
+                    cmd.Parameters.AddWithValue("@Customer", "");
+                    cmd.Parameters.AddWithValue("@Isdelete", "0");
+                    cmd.Parameters.AddWithValue("@Query", 1);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+
+            // Legacy concept: save VAT breakdown into Tbl_Purchasevatdetails (Type='Salesquote')
+            if (vatDetails != null)
+            {
+                foreach (var v in vatDetails)
+                {
+                    if (string.IsNullOrWhiteSpace(v.Id)) continue;
+                    using var cmd = new SqlCommand("Sp_Purchasevatdetails", connection, transaction);
+                    cmd.CommandType = CommandType.StoredProcedure;
+                    cmd.Parameters.AddWithValue("@Id", 0);
+                    cmd.Parameters.AddWithValue("@Billid", quoteId.ToString());
+                    cmd.Parameters.AddWithValue("@Customerid", quoteData.Userid ?? "Admin");
+                    cmd.Parameters.AddWithValue("@Type", "Salesquote");
+                    cmd.Parameters.AddWithValue("@Vatid", v.Id);
+                    cmd.Parameters.AddWithValue("@Price", v.Vatprice ?? "0");
+                    cmd.Parameters.AddWithValue("@Vatamount", v.Vatvalue ?? "0");
+                    cmd.Parameters.AddWithValue("@Isdelete", "0");
+                    cmd.Parameters.AddWithValue("@Query", 1);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+
+            // Legacy concept: log entry
+            using (var log = new SqlCommand("Sp_Salesquotelog", connection, transaction))
+            {
+                log.CommandType = CommandType.StoredProcedure;
+                log.Parameters.AddWithValue("@Id", DBNull.Value);
+                log.Parameters.AddWithValue("@Customerid", quoteData.Customerid ?? "");
+                log.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
+                log.Parameters.AddWithValue("@Approveuserid", "");
+                log.Parameters.AddWithValue("@Editreason", "");
+                log.Parameters.AddWithValue("@Comments", $"{quoteData.Salesquoteno} - Added");
+                log.Parameters.AddWithValue("@Isdelete", "0");
+                log.Parameters.AddWithValue("@Status", "Active");
+                log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                log.Parameters.AddWithValue("@Type", "Salesquote");
+                log.Parameters.AddWithValue("@Userid", DBNull.Value);
+                log.Parameters.AddWithValue("@Catelogid", DBNull.Value);
+                log.Parameters.AddWithValue("@Approveddate", DBNull.Value);
+                log.Parameters.AddWithValue("@Query", 1);
+                await log.ExecuteNonQueryAsync();
+            }
+
             transaction.Commit();
-            return Results.Ok(new { Message = "Sales quote created successfully", QuoteId = quoteId });
+            if (quoteId <= 0) return Results.Problem("Sales quote save failed (no Id returned).", statusCode: 500);
+            return Results.Ok(new { success = true, Message = "Sales quote created successfully", QuoteId = quoteId });
         }
         catch (Exception ex)
         {
             transaction.Rollback();
-            return Results.Ok(new { Message = "Failed to create sales quote", Error = ex.Message });
+            return Results.Problem(ex.Message, statusCode: 500, title: "Failed to create sales quote");
         }
     }
     catch (Exception ex)
     {
-        return Results.Ok(new { Message = "Database connection error", Error = ex.Message });
+        return Results.Problem(ex.Message, statusCode: 500, title: "Database connection error");
     }
 }).DisableAntiforgery();
 
@@ -11324,6 +11595,118 @@ app.MapDelete("/api/salesquote/{id}", async (int id, SqlConnection connection) =
     }
 });
 
+app.MapPost("/api/salesquote/checkqty", async (SalesQuoteCheckQtyRequest req, SqlConnection connection) =>
+{
+    try
+    {
+        await connection.OpenAsync();
+
+        var variantIdRaw = (req.variantid ?? "").Trim();
+        var warehouseIdRaw = (req.warehouseid ?? "").Trim();
+        var type = (req.type ?? "").Trim();
+        var requestedQty = req.qty;
+
+        if (string.IsNullOrWhiteSpace(variantIdRaw) || string.IsNullOrWhiteSpace(warehouseIdRaw) || requestedQty <= 0)
+            return Results.Ok(new { msg = "" });
+
+        var useFuture = false;
+        if (!string.IsNullOrWhiteSpace(req.deliverydate) &&
+            DateTime.TryParse(req.deliverydate, out var delDate) &&
+            delDate.Date > DateTime.Today)
+        {
+            useFuture = true;
+        }
+
+        static async Task<decimal> GetAvailableQty(SqlConnection conn, string productVariantId, string warehouseId)
+        {
+            // Mirrors the TotalQty formula used in stock procedures:
+            // opening + purchasetransit + stocktransfer(ongoing) + stocktransfertransit - salestransit - salesquote + salesreturntransit
+            using var cmd = new SqlCommand(@"
+                SELECT
+                    (
+                        ISNULL(SUM(CASE WHEN ti.Inventory_type = 1 AND ti.Status = 'Transit' AND ti.Billid = 0  THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      + ISNULL(SUM(CASE WHEN ti.Inventory_type = 1 AND ti.Status = 'Transit' AND ti.Billid <> 0 THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      + ISNULL(SUM(CASE WHEN ti.Inventory_type = 3 AND ti.Stocktransferstatus = 'Ongoing' THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      + ISNULL(SUM(CASE WHEN ti.Inventory_type = 3 AND ti.Status = 'Transit' AND ti.Stocktransferstatus IS NULL THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      - ISNULL(SUM(CASE WHEN ti.Inventory_type = 2 AND ti.Status = 'Transit' THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      - ISNULL(SUM(CASE WHEN ti.Inventory_type = 4 THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                      + ISNULL(SUM(CASE WHEN ti.Inventory_type = 5 AND ti.Status = 'Transit' THEN TRY_CONVERT(DECIMAL(18,6), ti.Total_qty) ELSE 0 END), 0)
+                    ) AS TotalQty
+                FROM Tbl_Inventory ti
+                WHERE ti.Isdelete = 0
+                  AND ti.Warehouse_status IN (1)
+                  AND ti.Productvariantsid = @Vid
+                  AND ti.Warehouseid = @Wid
+            ", conn);
+            cmd.Parameters.AddWithValue("@Vid", productVariantId);
+            cmd.Parameters.AddWithValue("@Wid", warehouseId);
+            var scalar = await cmd.ExecuteScalarAsync();
+            if (scalar == null || scalar == DBNull.Value) return 0m;
+            return Convert.ToDecimal(scalar);
+        }
+
+        async Task<decimal> GetMaxBuildableForComponents(string parentId, string componentSql)
+        {
+            using var cmd = new SqlCommand(componentSql, connection);
+            cmd.Parameters.AddWithValue("@ParentId", parentId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            decimal? max = null;
+            while (await reader.ReadAsync())
+            {
+                var compId = reader["Productvariantsid"]?.ToString();
+                var per = reader["Qty"] == DBNull.Value ? 0 : Convert.ToDecimal(reader["Qty"]);
+                if (string.IsNullOrWhiteSpace(compId) || per <= 0) continue;
+
+                var avail = await GetAvailableQty(connection, compId, warehouseIdRaw);
+                var possible = avail / per;
+                max = max.HasValue ? Math.Min(max.Value, possible) : possible;
+            }
+            return Math.Floor(max ?? 0m);
+        }
+
+        decimal availableForType;
+
+        if (type.Equals("Set", StringComparison.OrdinalIgnoreCase))
+        {
+            availableForType = await GetMaxBuildableForComponents(
+                variantIdRaw,
+                "SELECT Productvariantsid, Qty FROM Tbl_Setitems WHERE Productsetid = @ParentId AND Isdelete = 0"
+            );
+        }
+        else if (type.Equals("Combo", StringComparison.OrdinalIgnoreCase))
+        {
+            availableForType = await GetMaxBuildableForComponents(
+                variantIdRaw,
+                "SELECT Productvariantsid, Qty FROM Tbl_Comboitems WHERE Productcomboid = @ParentId AND Isdelete = 0"
+            );
+        }
+        else
+        {
+            // Item
+            availableForType = await GetAvailableQty(connection, variantIdRaw, warehouseIdRaw);
+        }
+
+        // NOTE: legacy used different inventory queries for future delivery date; we keep same availability formula
+        // because current schema doesn't expose future reservations cleanly at this layer.
+        _ = useFuture;
+
+        if (requestedQty > availableForType)
+            return Results.Ok(new { msg = availableForType.ToString(CultureInfo.InvariantCulture) });
+
+        return Results.Ok(new { msg = "" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: 500, title: "Stock check failed");
+    }
+    finally
+    {
+        if (connection.State == ConnectionState.Open) await connection.CloseAsync();
+    }
+})
+.WithName("SalesQuoteCheckQty")
+.WithOpenApi();
+
 app.MapGet("/api/salesquote/pending", async (SqlConnection connection) => 
 {
     try
@@ -11389,73 +11772,117 @@ app.MapPost("/api/salesquote/approve", async (HttpContext context, SqlConnection
     }
 });
 
-app.MapGet("/api/salesquote/details/{id}", async (int id, SqlConnection connection) => 
+app.MapGet("/api/debug-multi-schema", async (SqlConnection connection) => {
+    await connection.OpenAsync();
+    var tables = new[] { "Tbl_Productvariants", "Tbl_Productset", "Tbl_Combo" };
+    var result = new Dictionary<string, List<object>>();
+    foreach (var table in tables) {
+        using var cmd = new SqlCommand($"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table}'", connection);
+        var cols = new List<object>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) cols.Add(new { name = reader[0], type = reader[1] });
+        result[table] = cols;
+    }
+    return Results.Ok(result);
+});
+
+app.MapGet("/api/salesquote/details/{id}", async (string id, SqlConnection connection) => 
 {
     try
     {
         await connection.OpenAsync();
         
-        // Fetch Header
-        using var headerCmd = new SqlCommand(@"
-            SELECT q.*, c.Customerdisplayname
-            FROM Tbl_Salesquote q
-            LEFT JOIN Tbl_Customer c ON c.Id = q.Customerid
-            WHERE q.Id = @Id
-        ", connection);
+        // Fetch Header (Use Sp_Salesquote Query 4 as requested by user pattern)
+        using var headerCmd = new SqlCommand("Sp_Salesquote", connection);
+        headerCmd.CommandType = CommandType.StoredProcedure;
         headerCmd.Parameters.AddWithValue("@Id", id);
+        headerCmd.Parameters.AddWithValue("@Query", 4);
+        headerCmd.Parameters.AddWithValue("@Isdelete", 0);
+        headerCmd.Parameters.AddWithValue("@Userid", "");
+        headerCmd.Parameters.AddWithValue("@Customerid", "");
+        headerCmd.Parameters.AddWithValue("@Billdate", "");
+        headerCmd.Parameters.AddWithValue("@Duedate", "");
+        headerCmd.Parameters.AddWithValue("@Salesquoteno", "");
+        headerCmd.Parameters.AddWithValue("@Amountsare", "");
+        headerCmd.Parameters.AddWithValue("@Vatnumber", "");
+        headerCmd.Parameters.AddWithValue("@Billing_address", "");
+        headerCmd.Parameters.AddWithValue("@Sales_location", "");
+        headerCmd.Parameters.AddWithValue("@Sub_total", "");
+        headerCmd.Parameters.AddWithValue("@Vat", "");
+        headerCmd.Parameters.AddWithValue("@Vat_amount", "");
+        headerCmd.Parameters.AddWithValue("@Grand_total", "");
+        headerCmd.Parameters.AddWithValue("@Conversion_amount", DBNull.Value);
+        headerCmd.Parameters.AddWithValue("@Currency_rate", DBNull.Value);
+        headerCmd.Parameters.AddWithValue("@Currency", "");
+        headerCmd.Parameters.AddWithValue("@Terms", "");
         
         object? header = null;
+        int internalId = 0;
         using (var reader = await headerCmd.ExecuteReaderAsync())
         {
             if (await reader.ReadAsync())
             {
                 var columns = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
-                header = new {
-                    Id = reader["Id"],
-                    Salesquoteno = reader["Salesquoteno"]?.ToString(),
-                    Billdate = reader["Billdate"]?.ToString(),
-                    Duedate = reader["Duedate"]?.ToString(),
-                    Customerid = reader["Customerid"]?.ToString(),
-                    Customername = reader["Customerdisplayname"]?.ToString(),
-                    Billing_address = reader["Billing_address"]?.ToString(),
-                    Shipping_address = reader["Shipping_address"]?.ToString(),
-                    CustomerTrn = reader["Vatnumber"]?.ToString(),
-                    Sub_total = reader["Sub_total"]?.ToString(),
-                    Vat_amount = reader["Vat_amount"]?.ToString(),
-                    Grand_total = reader["Grand_total"]?.ToString(),
-                    Status = reader["Status"]?.ToString(),
-                    Managerapprovestatus = columns.Contains("Managerapprovestatus") ? reader["Managerapprovestatus"]?.ToString() : "0",
-                    Remarks = reader["Remarks"]?.ToString(),
-                    Terms = columns.Contains("Terms") ? reader["Terms"]?.ToString() : "",
-                    Salespersonname = columns.Contains("Salespersonname") ? reader["Salespersonname"]?.ToString() : ""
-                };
+                internalId = Convert.ToInt32(reader["Id"]);
+                var headerDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                foreach (var col in columns)
+                {
+                    headerDict[col] = reader[col] == DBNull.Value ? null : reader[col];
+                }
+                
+                // Map fields to match SalesQuoteApprovalView expectations
+                headerDict["Status"] = columns.Contains("Statussalesquote") ? reader["Statussalesquote"] : (columns.Contains("Status") ? reader["Status"] : "");
+                headerDict["Customername"] = (columns.Contains("Companyname") ? reader["Companyname"] : reader["Customerdisplayname"] ?? "")?.ToString();
+                headerDict["Billing_address"] = reader["Billing_address"]?.ToString();
+                headerDict["Contact"] = columns.Contains("Contact") ? reader["Contact"]?.ToString() : "";
+                headerDict["Phoneno"] = columns.Contains("Phonenumber") ? reader["Phonenumber"]?.ToString() : "";
+                
+                // Ensure totals and remarks are mapped for the frontend's underscored expectations
+                headerDict["Sub_total"] = columns.Contains("Sub_total") ? reader["Sub_total"] : (columns.Contains("Subtotal") ? reader["Subtotal"] : 0);
+                headerDict["Vat_amount"] = columns.Contains("Vat_amount") ? reader["Vat_amount"] : (columns.Contains("Vatamount") ? reader["Vatamount"] : 0);
+                headerDict["Grand_total"] = columns.Contains("Grand_total") ? reader["Grand_total"] : (columns.Contains("Grandtotal") ? reader["Grandtotal"] : 0);
+                headerDict["Remarks"] = columns.Contains("Remarks") ? reader["Remarks"] : "";
+                headerDict["Terms"] = columns.Contains("Terms") ? reader["Terms"] : "";
+                headerDict["Duedate"] = columns.Contains("Duedate") ? reader["Duedate"] : null;
+                headerDict["Billdate"] = columns.Contains("Billdate") ? reader["Billdate"] : null;
+                headerDict["Catelogid"] = columns.Contains("Catelogid") ? reader["Catelogid"] : (columns.Contains("Catalogid") ? reader["Catalogid"] : null);
+
+                header = headerDict;
             }
         }
         
         if (header == null) return Results.Json(new { success = false, message = "Quote not found" });
 
-        // Fetch Items
+        // Update @Id to internalId for detail queries
+        id = internalId.ToString();
+
+        // Fetch Items (Join with ProductVariants to get names)
         var items = new List<object>();
         using var itemsCmd = new SqlCommand(@"
-            SELECT d.*, p.Product_name as Itemname
+            SELECT d.*, pv.Itemname as VariantItemName, p.Itemname as ProductItemName
             FROM Tbl_Salesquotedetails d
-            LEFT JOIN Tbl_Product p ON p.Id = d.Itemid
-            WHERE d.Salesquoteid = @Id AND d.Type = 'Item' AND (d.Isdelete = '0' OR d.Isdelete IS NULL)
+            LEFT JOIN Tbl_Productvariants pv ON d.Itemid = pv.Id
+            LEFT JOIN Tbl_Product p ON pv.Productid = p.Id
+            WHERE d.Salesquoteid = @Id AND (d.Isdelete = '0' OR d.Isdelete IS NULL)
         ", connection);
         itemsCmd.Parameters.AddWithValue("@Id", id);
         using (var reader = await itemsCmd.ExecuteReaderAsync())
         {
+            var itemColumns = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
             while (await reader.ReadAsync())
             {
+                string itemName = reader["VariantItemName"]?.ToString() ?? reader["ProductItemName"]?.ToString() ?? "";
+                
                 items.Add(new {
                     Id = reader["Id"],
                     Itemid = reader["Itemid"]?.ToString(),
-                    Itemname = reader["Itemname"]?.ToString(),
+                    Itemname = itemName,
                     Qty = reader["Qty"]?.ToString(),
                     Amount = reader["Amount"]?.ToString(),
-                    Vat = reader["Vat"]?.ToString(),
+                    Vat = reader["Vat_id"]?.ToString(), // Vat_id column stores the numeric percentage
+                    Vatid = reader["Vat"]?.ToString(),   // Vat column stores the ID
                     Total = reader["Total"]?.ToString(),
-                    Description = "" // Add if needed
+                    Description = itemColumns.Contains("Description") ? reader["Description"]?.ToString() : ""
                 });
             }
         }
@@ -11463,10 +11890,11 @@ app.MapGet("/api/salesquote/details/{id}", async (int id, SqlConnection connecti
         // Fetch Categories
         var categories = new List<object>();
         using var catCmd = new SqlCommand(@"
-            SELECT d.*, c.Name as Categoryname
-            FROM Tbl_Salesquotedetails d
-            LEFT JOIN Tbl_Category c ON c.Id = d.Itemid
-            WHERE d.Salesquoteid = @Id AND d.Type = 'Category' AND (d.Isdelete = '0' OR d.Isdelete IS NULL)
+            SELECT pcd.*, pcd.Description as ResolvedCatName
+            FROM Tbl_Purchasecategorydetails pcd
+            WHERE pcd.Billid = @Id 
+              AND pcd.Type = 'Salesquote'
+              AND (pcd.Isdelete = '0' OR pcd.Isdelete IS NULL)
         ", connection);
         catCmd.Parameters.AddWithValue("@Id", id);
         using (var reader = await catCmd.ExecuteReaderAsync())
@@ -11475,12 +11903,14 @@ app.MapGet("/api/salesquote/details/{id}", async (int id, SqlConnection connecti
             {
                 categories.Add(new {
                     Id = reader["Id"],
-                    Categoryid = reader["Itemid"]?.ToString(),
-                    Categoryname = reader["Categoryname"]?.ToString(),
-                    Qty = reader["Qty"]?.ToString(),
+                    Categoryid = reader["Categoryid"]?.ToString(),
+                    Itemname = reader["ResolvedCatName"]?.ToString(), // Map to Itemname for unified table
+                    Qty = "1",
                     Amount = reader["Amount"]?.ToString(),
-                    Vat = reader["Vat"]?.ToString(),
-                    Total = reader["Total"]?.ToString()
+                    Vat = reader["Vatvalue"]?.ToString(),
+                    Vatid = reader["Vatid"]?.ToString(),
+                    Total = reader["Total"]?.ToString(),
+                    isCategory = true
                 });
             }
         }
@@ -11493,6 +11923,85 @@ app.MapGet("/api/salesquote/details/{id}", async (int id, SqlConnection connecti
     }
 });
 
+app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnection connection) =>
+{
+    try
+    {
+        var body = await context.Request.ReadFromJsonAsync<Dictionary<string, object?>>() ?? new Dictionary<string, object?>();
+        var idStr = body.TryGetValue("id", out var idObj) ? idObj?.ToString() : null;
+        var userid = body.TryGetValue("userid", out var uObj) ? (uObj?.ToString() ?? "") : "";
+        var reason = body.TryGetValue("reason", out var rObj) ? (rObj?.ToString() ?? "") : "";
+
+        if (!int.TryParse(idStr, out var quoteId) || quoteId <= 0)
+            return Results.BadRequest(new { success = false, message = "Invalid salesquote id" });
+
+        await connection.OpenAsync();
+
+        // Read current status + owner
+        string? status = null;
+        string? owner = null;
+        using (var cmd = new SqlCommand("SELECT Status, Userid FROM Tbl_Salesquote WHERE Id=@Id", connection))
+        {
+            cmd.Parameters.AddWithValue("@Id", quoteId);
+            using var rd = await cmd.ExecuteReaderAsync();
+            if (await rd.ReadAsync())
+            {
+                status = rd["Status"]?.ToString();
+                owner = rd["Userid"]?.ToString();
+            }
+        }
+        if (status == null) return Results.NotFound(new { success = false, message = "Quote not found" });
+
+        if (!string.Equals((owner ?? "").Trim(), (userid ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { success = false, message = "Editing is not possible" });
+
+        var st = (status ?? "").Trim();
+        if (st.Equals("Edit request sent", StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { success = false, message = "Already sent the edit request. Waiting for manager approval" });
+
+        var needsRequest = st.Equals("Approved", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Rejected", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Converted", StringComparison.OrdinalIgnoreCase);
+
+        if (!needsRequest)
+            return Results.Ok(new { success = false, message = "Edit request allowed only for Approved/Rejected/Converted quotes" });
+
+        // Update status
+        using (var upd = new SqlCommand("UPDATE Tbl_Salesquote SET Status = 'Edit request sent' WHERE Id=@Id", connection))
+        {
+            upd.Parameters.AddWithValue("@Id", quoteId);
+            await upd.ExecuteNonQueryAsync();
+        }
+
+        // Add log entry
+        using (var log = new SqlCommand("Sp_Salesquotelog", connection))
+        {
+            log.CommandType = CommandType.StoredProcedure;
+            log.Parameters.AddWithValue("@Id", DBNull.Value);
+            log.Parameters.AddWithValue("@Customerid", "");
+            log.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
+            log.Parameters.AddWithValue("@Approveuserid", "");
+            log.Parameters.AddWithValue("@Editreason", reason ?? "");
+            log.Parameters.AddWithValue("@Comments", "Edit request sent");
+            log.Parameters.AddWithValue("@Isdelete", "0");
+            log.Parameters.AddWithValue("@Status", "Active");
+            log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            log.Parameters.AddWithValue("@Type", "Salesquote");
+            log.Parameters.AddWithValue("@Userid", userid ?? "");
+            log.Parameters.AddWithValue("@Catelogid", DBNull.Value);
+            log.Parameters.AddWithValue("@Approveddate", DBNull.Value);
+            log.Parameters.AddWithValue("@Query", 1);
+            await log.ExecuteNonQueryAsync();
+        }
+
+        return Results.Ok(new { success = true, message = "Edit request sent. Wait for manager approval" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { success = false, message = ex.Message }, statusCode: 500);
+    }
+});
+
 app.MapControllers();
 app.Run();
 
@@ -11502,18 +12011,28 @@ public class SalesQuoteFormData
     public string? Customerid { get; set; }
     public string? Billdate { get; set; }
     public string? Duedate { get; set; }
+    public string? Deliverydate { get; set; }
     public string? Salesquoteno { get; set; }
     public string? Amountsare { get; set; }
+    public string? Vatnumber { get; set; }
     public string? Billing_address { get; set; }
     public string? Shipping_address { get; set; }
+    public string? Sales_location { get; set; }
+    public string? Contact { get; set; }
+    public string? Phoneno { get; set; }
     public string? Currency { get; set; }
-    public string? Currency_rate { get; set; }
+    public decimal? Currency_rate { get; set; }
+    public decimal? Conversion_amount { get; set; }
     public string? Terms { get; set; }
     public string? Salespersonname { get; set; }
     public string? Remarks { get; set; }
-    public string? Sub_total { get; set; }
-    public string? Vat_amount { get; set; }
-    public string? Grand_total { get; set; }
+    public decimal? Sub_total { get; set; }
+    public decimal? Vat_amount { get; set; }
+    public decimal? Grand_total { get; set; }
+    public string? Vat { get; set; }
+    public string? Discounttype { get; set; }
+    public decimal? Discountvalue { get; set; }
+    public decimal? Discountamount { get; set; }
     public string? Status { get; set; }
     public string? Isdelete { get; set; }
     public string? Type { get; set; }
@@ -11538,7 +12057,23 @@ public class SalesQuoteCategoryData
     public string? Vat { get; set; }
     public string? Vat_id { get; set; }
     public string? Total { get; set; }
+    public string? Description { get; set; }
 }
+
+public class SalesQuoteVatData
+{
+    public string? Id { get; set; }
+    public string? Vatprice { get; set; }
+    public string? Vatvalue { get; set; }
+}
+
+public record SalesQuoteCheckQtyRequest(
+    string? variantid,
+    decimal qty,
+    string? type,
+    string? warehouseid,
+    string? deliverydate
+);
 
 public class TaskModel
 {

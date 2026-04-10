@@ -38,6 +38,7 @@
     "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.0",
     "react-image-crop": "^11.0.10",
+    "react-pdf": "^10.4.1",
     "react-router-dom": "^7.12.0",
     "sweetalert2": "^11.26.17",
     "xlsx": "^0.18.5"

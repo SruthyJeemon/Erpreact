@@ -19,6 +19,66 @@ namespace Api.Controllers
             _configuration = configuration;
         }
 
+        [HttpGet]
+        [Route("/api/termsandcondition")]
+        public async Task<IActionResult> GetTermsAndCondition([FromQuery] string? userid, [FromQuery] string? type, [FromQuery] string? catalogId)
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+                    string? resolvedCatelogId = catalogId;
+                    
+                    if (string.IsNullOrWhiteSpace(resolvedCatelogId) && !string.IsNullOrWhiteSpace(userid))
+                    {
+                        using (var cmd = new SqlCommand("SELECT TOP 1 Catelogid FROM Tbl_Registration WHERE Userid = @Userid OR CAST(Id AS VARCHAR(50)) = @Userid", connection))
+                        {
+                            cmd.Parameters.AddWithValue("@Userid", userid ?? "");
+                            var obj = await cmd.ExecuteScalarAsync();
+                            resolvedCatelogId = obj?.ToString();
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(resolvedCatelogId))
+                        return Ok(new { success = true, list = Array.Empty<object>() });
+
+                    var list = new List<object>();
+                    using (SqlCommand cmd = new SqlCommand("Sp_Termsandcondition", connection))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.Parameters.AddWithValue("@Id", "");
+                        cmd.Parameters.AddWithValue("@Type", string.IsNullOrWhiteSpace(type) ? "Invoice" : type);
+                        cmd.Parameters.AddWithValue("@Terms", "");
+                        cmd.Parameters.AddWithValue("@Isdelete", "0");
+                        cmd.Parameters.AddWithValue("@Catelogid", resolvedCatelogId);
+                        cmd.Parameters.AddWithValue("@Bankid", "");
+                        cmd.Parameters.AddWithValue("@Query", 5);
+
+                        using var reader = await cmd.ExecuteReaderAsync();
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new
+                            {
+                                Termsandconditions = reader["Terms"]?.ToString(),
+                                Accountname = reader["Accountname"]?.ToString(),
+                                Account_number = reader["Account_number"]?.ToString(),
+                                IBAN = reader["IBAN"]?.ToString(),
+                                Bankname = reader["Bankname"]?.ToString(),
+                                Swift_code = reader["Swift_code"]?.ToString()
+                            });
+                        }
+                    }
+                    return Ok(new { success = true, list });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
         public class StockEditApprovalRequest
         {
             public string? Id { get; set; }
@@ -2517,5 +2577,160 @@ namespace Api.Controllers
                 return BadRequest(new { success = false, message = "Connection Error: " + ex.Message });
             }
         }
+
+        [HttpPost]
+        public IActionResult Getcustomersalesbilldetailsquote([FromForm] string pid)
+        {
+            string userid = "", Billing_address = "", companyname = "", email = "", phone = "", Title = "", Firstname = "", Middlename = "", Lastname = "", contact = "", Taxes = "", id = "";
+
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    SqlCommand cmd2 = new SqlCommand("Sp_Salesquote", con);
+                    cmd2.CommandType = CommandType.StoredProcedure;
+                    cmd2.Parameters.AddWithValue("@Id", pid ?? "");
+                    cmd2.Parameters.AddWithValue("@Isdelete", 0);
+                    cmd2.Parameters.AddWithValue("@Userid", "");
+                    cmd2.Parameters.AddWithValue("@Customerid", "");
+                    cmd2.Parameters.AddWithValue("@Billdate", "");
+                    cmd2.Parameters.AddWithValue("@Duedate", "");
+                    cmd2.Parameters.AddWithValue("@Salesquoteno", "");
+                    cmd2.Parameters.AddWithValue("@Amountsare", "");
+                    cmd2.Parameters.AddWithValue("@Vatnumber", "");
+                    cmd2.Parameters.AddWithValue("@Billing_address", "");
+                    cmd2.Parameters.AddWithValue("@Sales_location", "");
+                    cmd2.Parameters.AddWithValue("@Sub_total", "");
+                    cmd2.Parameters.AddWithValue("@Vat", "");
+                    cmd2.Parameters.AddWithValue("@Vat_amount", "");
+                    cmd2.Parameters.AddWithValue("@Grand_total", "");
+                    cmd2.Parameters.AddWithValue("@Conversion_amount", DBNull.Value);
+                    cmd2.Parameters.AddWithValue("@Currency_rate", DBNull.Value);
+                    cmd2.Parameters.AddWithValue("@Currency", "");
+                    cmd2.Parameters.AddWithValue("@Terms", "");
+                    cmd2.Parameters.AddWithValue("@Query", 4);
+                    con.Open();
+
+                    using (SqlDataAdapter da = new SqlDataAdapter(cmd2))
+                    {
+                        DataTable dt = new DataTable();
+                        da.Fill(dt);
+
+                        if (dt.Rows.Count > 0)
+                        {
+                            id = dt.Rows[0]["Id"].ToString();
+                            userid = dt.Rows[0]["Userid"].ToString();
+                            Billing_address = dt.Rows[0]["Billing_address"].ToString();
+                            companyname = dt.Rows[0]["Companyname"].ToString();
+                            email = dt.Rows[0]["Email"].ToString();
+                            phone = dt.Rows[0]["Phonenumber"].ToString();
+                            Title = dt.Rows[0]["Title"].ToString();
+                            Firstname = dt.Rows[0]["Firstname"].ToString();
+                            Middlename = dt.Rows[0]["Middlename"].ToString();
+                            Lastname = dt.Rows[0]["Lastname"].ToString();
+                            contact = dt.Rows[0]["Contact"].ToString();
+                            Taxes = dt.Rows[0]["Taxes"].ToString();
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error in Getcustomersalesbilldetailsquote: " + ex.Message);
+            }
+
+            return Ok(new { id = id, userid = userid, mailingaddress = Billing_address, companyname = companyname, email = email, phone = phone, Title = Title, Firstname = Firstname, Middlename = Middlename, Lastname = Lastname, contact = contact, Taxes = Taxes });
+        }
+
+        [HttpPost]
+
+        public IActionResult Getcustomerbillsdetailssalesquote([FromForm] string billid)
+        {
+            List<object> items = new List<object>();
+            string amountsare = "", userid = "", billdate = "", salesperson = "", status = "", txnno = "";
+
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    // Fetch Header Info
+                    using (SqlCommand cmdHeader = new SqlCommand(@"
+                        SELECT s.Amountsare, s.Userid, s.Billdate, s.Statussalesquote, s.Salesquoteno,
+                               r.Firstname + ' ' + ISNULL(r.Lastname, '') as Salesperson
+                        FROM Tbl_Salesquote s
+                        LEFT JOIN Tbl_Registration r ON s.Userid = r.Userid
+                        WHERE s.Id = @Id", con))
+                    {
+                        cmdHeader.Parameters.AddWithValue("@Id", billid);
+                        using (var reader = cmdHeader.ExecuteReader())
+                        {
+                            if (reader.Read())
+                            {
+                                amountsare = reader["Amountsare"]?.ToString() ?? "";
+                                userid = reader["Userid"]?.ToString() ?? "";
+                                billdate = reader["Billdate"]?.ToString() ?? "";
+                                salesperson = reader["Salesperson"]?.ToString() ?? "";
+                                status = reader["Statussalesquote"]?.ToString() ?? "";
+                                txnno = reader["Salesquoteno"]?.ToString() ?? "";
+                            }
+                        }
+                    }
+
+                    // Fetch Items
+                    using (SqlCommand cmdItems = new SqlCommand(@"
+                        SELECT d.*, pv.Itemname, pv.Modelno, pv.allvalues
+                        FROM Tbl_Salesquotedetails d
+                        LEFT JOIN Tbl_Productvariants pv ON d.Itemid = CAST(pv.Id AS VARCHAR(50))
+                        WHERE d.Salesquoteid = @Id AND (d.Isdelete = '0' OR d.Isdelete IS NULL)", con))
+                    {
+                        cmdItems.Parameters.AddWithValue("@Id", billid);
+                        using (var reader = cmdItems.ExecuteReader())
+                        {
+                            var columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            while (reader.Read())
+                            {
+                                items.Add(new
+                                {
+                                    Id = reader["Id"],
+                                    Itemid = reader["Itemid"],
+                                    Itemname = reader["Itemname"]?.ToString() ?? "",
+                                    Modelno = reader["Modelno"]?.ToString() ?? "",
+                                    allvalues = reader["allvalues"]?.ToString() ?? "",
+                                    Description = reader["Description"]?.ToString() ?? "",
+                                    Serialized = columns.Contains("Serialized") ? reader["Serialized"] : "No",
+                                    Serialno = columns.Contains("Serialno") ? reader["Serialno"] : "",
+                                    Qty = reader["Qty"],
+                                    Amount = reader["Amount"],
+                                    Vatid = reader["Vat"], // Vat ID
+                                    Vat = reader["Vat_id"],  // Vat Percentage/Value
+                                    Total = reader["Total"],
+                                    Type = "Item"
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error in Getcustomerbillsdetailssalesquote: " + ex.Message);
+            }
+
+            return Ok(new 
+            { 
+                List1 = items, 
+                amountsare = amountsare, 
+                userid = userid, 
+                billdate = billdate, 
+                salesperson1 = salesperson,
+                status = status,
+                txnno = txnno
+            });
+        }
     }
 }
+

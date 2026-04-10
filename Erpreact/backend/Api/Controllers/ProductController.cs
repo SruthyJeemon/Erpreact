@@ -2732,6 +2732,191 @@ WHERE Variantorset = N'Set'
             }
         }
 
+        /// <summary>
+        /// Legacy MVC Savecomboeditrequest — full SP chain for combo edit/delete manager decision.
+        /// Approves/Rejects an Editrequest/Deleterequest and returns refreshed pending list (Sp_Combocomments Q3).
+        /// </summary>
+        [HttpPost("savecomboeditrequest")]
+        public IActionResult Savecomboeditrequest([FromBody] ComboEditRequestProcessPayload formData)
+        {
+            var variantrequest = new List<Dictionary<string, object>>();
+            string msg = "";
+            string itemrequestcount = "";
+
+            try
+            {
+                string approver = (formData.Approved_Userid ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(approver))
+                    return BadRequest(new { success = false, message = "Approved_Userid is required" });
+
+                string comboId = (formData.Productid ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(comboId))
+                    return BadRequest(new { success = false, message = "Productid (combo id) is required" });
+
+                string ctRaw = (formData.Commenttype ?? "").Trim();
+                string ctFold = new string(ctRaw.Where(c => !char.IsWhiteSpace(c)).ToArray());
+                string commentTypeReplay;
+                string commentTypeOriginal;
+                if (string.Equals(ctFold, "Editrequest", StringComparison.OrdinalIgnoreCase))
+                {
+                    commentTypeReplay = "Editrequestreplay";
+                    commentTypeOriginal = "Editrequest";
+                }
+                else if (string.Equals(ctFold, "Deleterequest", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(ctFold, "DeleteRequest", StringComparison.OrdinalIgnoreCase))
+                {
+                    commentTypeReplay = "Deleterequestreplay";
+                    commentTypeOriginal = "Deleterequest";
+                }
+                else
+                {
+                    return BadRequest(new { success = false, message = "Commenttype must be Editrequest or Deleterequest" });
+                }
+
+                bool approved = string.Equals((formData.Status ?? "").Trim(), "Approved", StringComparison.OrdinalIgnoreCase);
+                string statusParam = approved ? "1" : "2";
+                string currentTimestamp = DateTime.Now.ToString("MMM d yyyy h:mmtt");
+                string comments = formData.Commentss ?? "";
+
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                using (SqlConnection con = new SqlConnection(connectionString))
+                {
+                    con.Open();
+
+                    // 1) Sp_Combocomments Q1 — save manager replay row
+                    using (SqlCommand cmd4 = new SqlCommand("Sp_Combocomments", con))
+                    {
+                        cmd4.CommandType = CommandType.StoredProcedure;
+                        cmd4.Parameters.AddWithValue("@Userid", formData.Userid ?? "");
+                        cmd4.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd4.Parameters.AddWithValue("@Approved_Userid", approver);
+                        cmd4.Parameters.AddWithValue("@Productcomboid", comboId);
+                        cmd4.Parameters.AddWithValue("@Checked_Date", currentTimestamp);
+                        cmd4.Parameters.AddWithValue("@Comments", comments);
+                        cmd4.Parameters.AddWithValue("@Commenttype", commentTypeReplay);
+                        cmd4.Parameters.AddWithValue("@Status", statusParam);
+                        cmd4.Parameters.AddWithValue("@Role", "Manager");
+                        cmd4.Parameters.AddWithValue("@Query", 1);
+                        cmd4.ExecuteNonQuery();
+                    }
+
+                    msg = "Response successfully saved";
+
+                    // 2) Comments Q7 — legacy email lookup for manager (kept for compatibility; no SMTP in API)
+                    try
+                    {
+                        using (SqlCommand cmd411 = new SqlCommand("Comments", con))
+                        {
+                            cmd411.CommandType = CommandType.StoredProcedure;
+                            cmd411.Parameters.AddWithValue("@id", "");
+                            cmd411.Parameters.AddWithValue("@Userid", approver);
+                            cmd411.Parameters.AddWithValue("@Accepted_Userid", "");
+                            cmd411.Parameters.AddWithValue("@Approved_Userid", "");
+                            cmd411.Parameters.AddWithValue("@Productid", "");
+                            cmd411.Parameters.AddWithValue("@Checked_Date", "");
+                            cmd411.Parameters.AddWithValue("@Comments", "");
+                            cmd411.Parameters.AddWithValue("@Status", "");
+                            cmd411.Parameters.AddWithValue("@Query", 7);
+                            using (SqlDataAdapter da411 = new SqlDataAdapter(cmd411))
+                            {
+                                var dt411 = new DataTable();
+                                da411.Fill(dt411);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Savecomboeditrequest Comments Q7: " + ex.Message);
+                    }
+
+                    // 3) Sp_productcombo Q6 — update combo Isdelete + Workstatus
+                    string isDeleteVal = "0";
+                    if (approved && string.Equals(commentTypeOriginal, "Deleterequest", StringComparison.OrdinalIgnoreCase))
+                        isDeleteVal = "1";
+
+                    string workStatusVal = approved ? "0" : "2";
+
+                    using (SqlCommand cmd212 = new SqlCommand("Sp_productcombo", con))
+                    {
+                        cmd212.CommandType = CommandType.StoredProcedure;
+                        cmd212.Parameters.AddWithValue("@Id", comboId);
+                        cmd212.Parameters.AddWithValue("@Userid", "");
+                        cmd212.Parameters.AddWithValue("@Comboname", "");
+                        cmd212.Parameters.AddWithValue("@Modelno", "");
+                        cmd212.Parameters.AddWithValue("@Batchno", "");
+                        cmd212.Parameters.AddWithValue("@EANBarcodeno", "");
+                        cmd212.Parameters.AddWithValue("@Isdelete", isDeleteVal);
+                        cmd212.Parameters.AddWithValue("@Status", "");
+                        cmd212.Parameters.AddWithValue("@Workstatus", workStatusVal);
+                        cmd212.Parameters.AddWithValue("@Description", "");
+                        cmd212.Parameters.AddWithValue("@Wholesalepriceset", "");
+                        cmd212.Parameters.AddWithValue("@Retailpriceset", "");
+                        cmd212.Parameters.AddWithValue("@Onlinepriceset", "");
+                        cmd212.Parameters.AddWithValue("@Query", 6);
+                        cmd212.ExecuteNonQuery();
+                    }
+
+                    // 4) Sp_Combocomments Q4 — mark original request processed (legacy step)
+                    using (SqlCommand cmd42 = new SqlCommand("Sp_Combocomments", con))
+                    {
+                        cmd42.CommandType = CommandType.StoredProcedure;
+                        cmd42.Parameters.AddWithValue("@Userid", "");
+                        cmd42.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd42.Parameters.AddWithValue("@Approved_Userid", approver);
+                        cmd42.Parameters.AddWithValue("@Productcomboid", comboId);
+                        cmd42.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd42.Parameters.AddWithValue("@Comments", "");
+                        cmd42.Parameters.AddWithValue("@Commenttype", commentTypeOriginal);
+                        cmd42.Parameters.AddWithValue("@Status", "");
+                        cmd42.Parameters.AddWithValue("@Role", "");
+                        cmd42.Parameters.AddWithValue("@Query", 4);
+                        cmd42.ExecuteNonQuery();
+                    }
+
+                    // 5) Sp_Combocomments Q3 — reload all pending combo edit/delete requests for this manager user
+                    using (SqlCommand cmd41 = new SqlCommand("Sp_Combocomments", con))
+                    {
+                        cmd41.CommandType = CommandType.StoredProcedure;
+                        cmd41.Parameters.AddWithValue("@Userid", approver);
+                        cmd41.Parameters.AddWithValue("@Accepted_Userid", "");
+                        cmd41.Parameters.AddWithValue("@Approved_Userid", "");
+                        cmd41.Parameters.AddWithValue("@Productcomboid", "");
+                        cmd41.Parameters.AddWithValue("@Checked_Date", "");
+                        cmd41.Parameters.AddWithValue("@Comments", "");
+                        cmd41.Parameters.AddWithValue("@Commenttype", "Editrequest,Deleterequest");
+                        cmd41.Parameters.AddWithValue("@Status", "0");
+                        cmd41.Parameters.AddWithValue("@Role", "");
+                        cmd41.Parameters.AddWithValue("@Query", 3);
+
+                        using (SqlDataAdapter da41 = new SqlDataAdapter(cmd41))
+                        {
+                            var dt41 = new DataTable();
+                            da41.Fill(dt41);
+                            itemrequestcount = dt41.Rows.Count.ToString();
+
+                            foreach (DataRow r in dt41.Rows)
+                            {
+                                var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                                foreach (DataColumn c in dt41.Columns)
+                                {
+                                    var v = r[c];
+                                    row[c.ColumnName] = v == DBNull.Value ? null : v;
+                                }
+                                variantrequest.Add(row);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Savecomboeditrequest: " + ex);
+                return StatusCode(500, new { success = false, message = ex.Message, List1 = variantrequest, msg = msg, itemrequestcount = itemrequestcount });
+            }
+
+            return Ok(new { List1 = variantrequest, msg = msg, itemrequestcount = itemrequestcount });
+        }
+
         [HttpGet("getproductcomboedit/{id}")]
         public IActionResult Getproductcomboedit(int id)
         {
@@ -4290,6 +4475,23 @@ WHERE Variantorset = N'Set'
         public string Userid { get; set; }
         public string Commentss { get; set; }
         
+    }
+
+    public class ComboEditRequestProcessPayload
+    {
+        public string? Userid { get; set; }
+        public string? Approved_Userid { get; set; }
+        /// <summary>Combo id (legacy form field Productid).</summary>
+        public string? Productid { get; set; }
+        public string? Commentss { get; set; }
+        public string? Firstname { get; set; }
+        /// <summary>Legacy comment row id (not required for SP flow).</summary>
+        public string? Id { get; set; }
+        /// <summary>Editrequest or Deleterequest.</summary>
+        public string? Commenttype { get; set; }
+        /// <summary>Approved or Rejected.</summary>
+        public string? Status { get; set; }
+        public string? Comboname { get; set; }
     }
 
     public class DeleteSetPayload

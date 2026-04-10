@@ -780,6 +780,21 @@ const ComboSection = () => {
                                                     const isApproved = comboStatus === '1' || comboStatus === 'Approved' || comboStatus === 'Active';
 
                                                     if (userRole !== 'Admin' && isApproved) {
+                                                        // If manager already approved an edit request for this combo+user, allow edit directly.
+                                                        try {
+                                                            const currentUserId = String(user.Userid || user.userid || '');
+                                                            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                                                            const check = await fetch(`${API_URL}/api/combo/edit-requests/approved?comboId=${encodeURIComponent(String(combo.id || combo.Id))}&userid=${encodeURIComponent(currentUserId)}`);
+                                                            const checkData = await check.json().catch(() => ({}));
+                                                            if (check.ok && checkData?.approved === true) {
+                                                                await handleView(combo.id || combo.Id);
+                                                                setIsViewOnly(false);
+                                                                return;
+                                                            }
+                                                        } catch (e) {
+                                                            console.error('approved edit request check failed', e);
+                                                        }
+
                                                         const { value: confirm } = await Swal.fire({
                                                             title: 'Editing is not possible. Already approved. Do you want to send an edit request?',
                                                             icon: 'info',

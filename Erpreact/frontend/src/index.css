@@ -30,8 +30,6 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
 }
@@ -114,6 +112,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #f8fafc;
   /* Slate-50 background */
+  /* Ensure app layouts can scroll normally (override Vite template defaults). */
+  display: block;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
 }
 
 /* Animations */

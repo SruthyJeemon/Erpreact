@@ -1549,6 +1549,18 @@ const Dashboard = () => {
               icon: getIconForMenu('Combo', 'submodule')
             });
           }
+
+          // Purchase Approval hub (Managers only)
+          const hasPurchaseApprovalHub = approvalsModule.submenus.some(sm =>
+            sm.id === 'purchase-approval-hub' || (sm.label || '').toLowerCase().includes('purchase approval')
+          );
+          if (rlMgr.includes('manager') && !hasPurchaseApprovalHub) {
+            approvalsModule.submenus.push({
+              id: 'purchase-approval-hub',
+              label: 'Purchase Approval',
+              icon: getIconForMenu('Purchase Approval', 'submodule')
+            });
+          }
         }
 
         // Ensure Product Management module is visible for Admin and Manager roles
@@ -2241,7 +2253,7 @@ const Dashboard = () => {
         {activeSection === 'sales-quote' && (
           <SalesQuoteSection
             onAddQuote={() => navigate('/sales-quote-create')}
-            onEditQuote={(id) => navigate(`/sales-quote-create/${id}`)}
+            onEditQuote={(id) => navigate(`/sales-quote-edit/${id}`)}
             onViewQuote={(id) => navigate(`/sales-quote-view/${id}`)}
           />
         )}
@@ -2256,6 +2268,14 @@ const Dashboard = () => {
             onBack={() => setActiveSection('sales-quote')}
             quoteId={activeSection.includes('/') ? activeSection.split('/')[1] : null}
             mode={activeSection.includes('/') ? 'edit' : 'create'}
+          />
+        )}
+
+        {(activeSection?.startsWith('sales-quote-edit/')) && (
+          <SalesQuoteCreate
+            onBack={() => setActiveSection('sales-quote')}
+            quoteId={activeSection.split('/')[1]}
+            mode="edit"
           />
         )}
         {activeSection === 'sales-quote-approval' && (
@@ -3047,6 +3067,9 @@ const Dashboard = () => {
           !activeSection.startsWith('customer-view/') &&
           !activeSection.startsWith('supplier-create-bill/') &&
           !activeSection.startsWith('customer-create-bill/') &&
+          !activeSection.startsWith('sales-quote-view/') &&
+          !activeSection.startsWith('sales-quote-create/') &&
+          activeSection !== 'sales-quote-create' &&
           !activeSection.endsWith('/brand') &&
           !activeSection.endsWith('/Brand') &&
           !activeSection.toLowerCase().endsWith('/category') &&
