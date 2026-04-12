@@ -8,6 +8,10 @@ export default defineConfig({
     preserveSymlinks: true
   },
   server: {
+    // Listen on all interfaces so other devices can use http://<your-LAN-IP>:5173
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
     watch: {
       usePolling: true,
       interval: 100

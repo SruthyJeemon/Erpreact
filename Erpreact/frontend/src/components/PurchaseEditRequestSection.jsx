@@ -39,7 +39,7 @@ const PurchaseEditRequestSection = ({ onBack, onViewBill, hideHeader = false }) 
     const [requests, setRequests] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Processing Dialog State
     const [processDialogOpen, setProcessDialogOpen] = useState(false);

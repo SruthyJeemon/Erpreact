@@ -100,7 +100,7 @@ const TaskDetailModal = ({ open, onClose, task, subtasks = [], refreshTasks }) =
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Get current user info for permission checks
     const userString = localStorage.getItem('user');
@@ -1940,7 +1940,7 @@ const AddTaskModal = ({ open, onClose, onTaskCreated }) => {
     const [marketplaces, setMarketplaces] = useState([]);
     const [stockLocations, setStockLocations] = useState([]);
     const [itemSuggestions, setItemSuggestions] = useState({}); // Track suggestions per row index
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     useEffect(() => {
         if (open) {
@@ -2947,7 +2947,7 @@ const TaskListingSection = () => {
         assigneeBreakdown: []
     });
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     const mapStatus = (s) => {
         if (s === null || s === undefined) return 'todo';

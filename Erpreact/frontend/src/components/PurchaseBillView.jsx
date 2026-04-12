@@ -251,7 +251,7 @@ const BillTemplate = ({ bill, id = "bill-template", showApprovalActions = false 
     );
 };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
 const PurchaseBillView = ({ initialBillId, showApprovalActions = false, onApprovalSuccess, onBack: customOnBack }) => {
     const navigate = useNavigate();

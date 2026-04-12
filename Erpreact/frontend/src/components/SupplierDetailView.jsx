@@ -60,7 +60,7 @@ const SupplierDetailView = ({ supplierId, onBack, onNavigate }) => {
     const [page, setPage] = useState(1);
     const [rowsPerPage, setRowsPerPage] = useState(5);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
     useEffect(() => {

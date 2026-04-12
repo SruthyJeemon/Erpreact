@@ -26,7 +26,7 @@ const SalesReturnSection = () => {
     const [tabValue, setTabValue] = useState(0);
     const [loading, setLoading] = useState(false);
     const [returnData, setReturnData] = useState([]);
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     useEffect(() => {
         fetchReturnData();

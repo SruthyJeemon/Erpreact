@@ -61,7 +61,7 @@ const SalesReturnApproval = () => {
     const [previewPdfUrl, setPreviewPdfUrl] = useState('');
     const receiptRef = React.useRef(null);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const userRaw = localStorage.getItem('user');
     const user = userRaw ? JSON.parse(userRaw) : {};
     const userId = user.Userid || user.userid || user.id || user.Id || '';

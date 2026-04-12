@@ -58,7 +58,7 @@ const BrandSection = () => {
         brand_logo: ''
     });
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Helper function to get full image URL
     const getImageUrl = (logoPath) => {

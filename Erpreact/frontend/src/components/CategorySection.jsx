@@ -58,7 +58,7 @@ const CategorySection = () => {
         active_status: 'Active'
     });
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Fetch Categories
     const fetchAllCategories = async () => {

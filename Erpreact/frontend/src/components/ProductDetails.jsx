@@ -80,7 +80,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import './ProductDetails.css';
 
 const ProductDetails = () => {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const bumpSwalAboveMui = () => {
         // Ensure SweetAlert overlays Material-UI dialogs/drawers.
         document.querySelectorAll('.swal2-container').forEach((el) => {
@@ -292,7 +292,7 @@ const ProductDetails = () => {
         setViewSetTab(0);
         setViewSetDetailLoading(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/product/productset/${sid}`);
             const data = await res.json();
             if (res.ok && data.success && data.set) {
@@ -334,7 +334,7 @@ const ProductDetails = () => {
                         .filter(g => Number(g.File_id ?? g.file_id) === 3)
                         .map(g => {
                             const p = g.Gallery_file ?? g.gallery_file ?? '';
-                            const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                            const API_BASE = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                             let preview = p;
                             if (p && !p.startsWith('http')) {
                                 let fp = p;
@@ -705,7 +705,7 @@ const ProductDetails = () => {
         try {
             if (!variant) return;
 
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
             const user = userStr ? JSON.parse(userStr) : {};
             const userid = String(user.Userid || user.userid || user.id || user.Id || '');
@@ -1278,7 +1278,7 @@ const ProductDetails = () => {
 
     const handleViewVariant = async (variant) => {
         if (!variant) return;
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+        const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
         const currentVariantId = variant.id || variant.Id || variant.Productvariantsid || variant.productvariantsid;
         if (!currentVariantId) {
             setSelectedVariant(variant);
@@ -1379,7 +1379,7 @@ const ProductDetails = () => {
         if (showAddVariantModal) {
             const fetchVariants = async () => {
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                     const response = await fetch(`${API_URL}/api/variant?Query=3`);
                     const data = await response.json();
 
@@ -1400,7 +1400,7 @@ const ProductDetails = () => {
 
             const fetchAgeCategories = async () => {
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                     const response = await fetch(`${API_URL}/api/agecategory`);
                     const data = await response.json();
                     const isSuccess = data.Success || data.success;
@@ -1415,7 +1415,7 @@ const ProductDetails = () => {
 
             const fetchStockLocations = async () => {
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                     console.log('Fetching stock locations from:', `${API_URL}/api/stocklocation`);
                     const response = await fetch(`${API_URL}/api/stocklocation`);
                     const data = await response.json();
@@ -1475,7 +1475,7 @@ const ProductDetails = () => {
         }
 
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const response = await fetch(`${API_URL}/api/checkduplicate?type=${field}&value=${encodeURIComponent(value)}`);
             const data = await response.json();
 
@@ -1581,7 +1581,7 @@ const ProductDetails = () => {
         try {
             setFormLoading(true);
 
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const isUpdate = !!variantFormData.variantId;
 
             // Prepare FormData for file uploads
@@ -1793,7 +1793,7 @@ const ProductDetails = () => {
         setFormLoading(true);
         setModalMessage('');
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             // Construct payload matching backend expectation
             const payload = {
                 product_name: newProduct.product_name,
@@ -1880,7 +1880,7 @@ const ProductDetails = () => {
     const getImageUrl = (pathInput, size = 'Thumb') => {
         const path = pathInput?.path || pathInput?.url || (typeof pathInput === 'string' ? pathInput : '');
         if (!path) return 'https://picsum.photos/400/300?text=No+Image';
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+        const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
         // If it's already a full URL, return it (but still safe for spaces)
         if (path.startsWith('http')) return encodeURI(path);
@@ -1924,7 +1924,7 @@ const ProductDetails = () => {
             return;
         }
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/product/productsets/${encodeURIComponent(pid)}`);
             const data = await res.json();
             const rows = data.List1 || data.list1 || [];
@@ -1950,7 +1950,7 @@ const ProductDetails = () => {
         }
 
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const response = await fetch(`${API_URL}/api/product?search=${productId}&userid=ADMIN`);
             const result = await response.json();
 
@@ -2039,7 +2039,7 @@ const ProductDetails = () => {
 
     const fetchAllProducts = async (searchTerm = '') => {
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             // If catelogid is provided, we use the actual userid to ensure the backend filters by catalog.
             // If we use 'ADMIN', the backend ignores the catalog filter.
@@ -2110,7 +2110,7 @@ const ProductDetails = () => {
     useEffect(() => {
         const fetchMetadata = async () => {
             try {
-                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                 const [brandRes, catRes] = await Promise.all([
                     fetch(`${API_URL}/api/brand`),
                     fetch(`${API_URL}/api/category?pageSize=1000000`)
@@ -2144,7 +2144,7 @@ const ProductDetails = () => {
                 }
 
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
                     // 1. Get Role ID
                     const roleRes = await fetch(`${API_URL}/api/role/byname/${encodeURIComponent(userRole)}`);
@@ -2231,7 +2231,7 @@ const ProductDetails = () => {
 
         // If it IS approved (Status 1), we check for pending requests and ask for a reason
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/editreason/pending/${p('product_id')}`);
             const data = await res.json();
 
@@ -2279,7 +2279,7 @@ const ProductDetails = () => {
 
         // If approved, check for pending requests
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/editreason/pending/${p('product_id')}`);
             const data = await res.json();
 
@@ -2371,7 +2371,7 @@ const ProductDetails = () => {
         }
 
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             const userId = user.Userid || user.userid || user.id || user.Id || 'ADMIN';
 
@@ -2425,7 +2425,7 @@ const ProductDetails = () => {
         }
         setIsSearchingItems(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             const catId = user.Catelogid || user.catelogid || '1001';
 
@@ -2521,7 +2521,7 @@ const ProductDetails = () => {
 
         setFormLoading(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
 
             const toServerNumber = (v) => {
@@ -2678,7 +2678,7 @@ const ProductDetails = () => {
         e.preventDefault();
         setFormLoading(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const submitData = new FormData();
             submitData.append('Product_id', formData.product_id); // Critical for Update
             submitData.append('Product_name', formData.product_name);

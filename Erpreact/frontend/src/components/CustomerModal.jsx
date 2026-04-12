@@ -40,6 +40,7 @@ import PaymentsIcon from '@mui/icons-material/Payments';
 import BusinessIcon from '@mui/icons-material/Business';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import Slide from '@mui/material/Slide';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -80,7 +81,7 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
     const [loading, setLoading] = useState(false);
     const [errors, setErrors] = useState({});
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
     // Initial State matching Tbl_Customer fields
@@ -133,8 +134,57 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
     const [formData, setFormData] = useState(defaultFormData);
     // State for attachment table rows
     const [attachmentRows, setAttachmentRows] = useState([]);
+    const [salespeople, setSalespeople] = useState([]);
+    const [documentTypes, setDocumentTypes] = useState([]);
 
     useEffect(() => {
+        const fetchMetadata = async () => {
+            try {
+                // Fetch Salespeople
+                const salesRes = await fetch(`${API_URL}/api/customer/salespeople`);
+                if (salesRes.ok) {
+                    const salesData = await salesRes.json();
+                    if (salesData.success) {
+                        setSalespeople(salesData.data || []);
+                    }
+                }
+
+                // Fetch Document Types
+                const docRes = await fetch(`${API_URL}/api/customer/documents`);
+                if (docRes.ok) {
+                    const docData = await docRes.json();
+                    if (docData.success) {
+                        setDocumentTypes(docData.data || []);
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching metadata:', error);
+            }
+        };
+        fetchMetadata();
+    }, []);
+
+    useEffect(() => {
+        const fetchExistingAttachments = async () => {
+            if (mode === 'edit' && initialData && (initialData.Id || initialData.id)) {
+                try {
+                    const custId = initialData.Id || initialData.id;
+                    const response = await fetch(`${API_URL}/api/customer/${custId}/attachments`);
+                    const data = await response.json();
+                    if (data.success) {
+                        setAttachmentRows(data.data.map(at => ({
+                            id: at.Id || at.id,
+                            document: at.Documentname || at.documentname,
+                            file: at.Attachment || at.attachment,
+                            expiryDate: at.Expirydate ? at.Expirydate.split('T')[0] : ''
+                        })));
+                    }
+                } catch (error) {
+                    console.error('Error fetching attachments:', error);
+                }
+            }
+        };
+
         if (open) {
             setActiveTab(0);
             setErrors({});
@@ -185,7 +235,7 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
                     warehouseid: initialData.Warehouseid || initialData.warehouseid || '',
                     status: initialData.Status || initialData.status || 'Active'
                 });
-                // Note: Attachments parsing from string to rows is tricky if stored as string, skipping complex parsing for now
+                fetchExistingAttachments();
             } else {
                 setFormData(defaultFormData);
             }
@@ -223,28 +273,44 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
 
         setLoading(true);
         try {
-            const payload = {
+            const formDataToSend = new FormData();
+
+            // Prepare the model data
+            const modelData = {
                 ...formData,
-                userid: user.Userid || user.userid || '1',
-                // Flatten attachments if needed, for now just sending empty or raw
-                attachments: JSON.stringify(attachmentRows)
+                userid: user.Userid || user.userid || '1'
             };
+            formDataToSend.append('model', JSON.stringify(modelData));
+
+            // Prepare attachment rows metadata
+            const rowsMetadata = attachmentRows.map(row => ({
+                id: row.id,
+                document: row.document,
+                file: typeof row.file === 'string' ? row.file : '',
+                expiryDate: row.expiryDate
+            }));
+            formDataToSend.append('attachments', JSON.stringify(rowsMetadata));
+
+            // Append each File object
+            attachmentRows.forEach(row => {
+                if (row.file instanceof File) {
+                    formDataToSend.append(`file_${row.id}`, row.file);
+                }
+            });
 
             const url = mode === 'edit'
                 ? `${API_URL}/api/customer/${formData.id}`
                 : `${API_URL}/api/customer`;
 
-            const method = mode === 'edit' ? 'PUT' : 'POST';
-
             const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                method: mode === 'edit' ? 'PUT' : 'POST',
+                body: formDataToSend
             });
 
             const result = await response.json();
 
             if (result.success) {
+                alert(mode === 'edit' ? 'Customer updated successfully' : 'Customer created successfully');
                 if (onSaveSuccess) onSaveSuccess();
                 onClose();
             } else {
@@ -260,6 +326,16 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
 
     const handleAddAttachment = () => {
         setAttachmentRows([...attachmentRows, { id: Date.now(), document: '', file: '', expiryDate: '' }]);
+    };
+
+    const handleAttachmentChange = (id, field, value) => {
+        setAttachmentRows(prev => prev.map(row => 
+            row.id === id ? { ...row, [field]: value } : row
+        ));
+    };
+
+    const handleRemoveAttachment = (id) => {
+        setAttachmentRows(prev => prev.filter(row => row.id !== id));
     };
 
     return (
@@ -459,7 +535,11 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
                                                 onChange={(e) => setFormData({ ...formData, salespersonid: e.target.value })}
                                             >
                                                 <MenuItem value="">Select</MenuItem>
-                                                <MenuItem value={1}>Salesperson A</MenuItem>
+                                                {salespeople.map((s) => (
+                                                    <MenuItem key={s.Id || s.id} value={s.Id || s.id}>
+                                                        {s.Salesperson || s.salesperson}
+                                                    </MenuItem>
+                                                ))}
                                             </Select>
                                         </FormControl>
                                     </Box>
@@ -476,7 +556,22 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
                                         gap: 3,
                                         width: '100%'
                                     }}>
-                                        <TextField fullWidth size="small" label="Company Name" value={formData.companyname} onChange={(e) => setFormData({ ...formData, companyname: e.target.value })} />
+                                        <TextField 
+                                            fullWidth 
+                                            size="small" 
+                                            label="Company Name" 
+                                            value={formData.companyname} 
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                const words = value.trim().split(/\s+/).filter(w => w);
+                                                const displayName = words.slice(0, 2).join(' ');
+                                                setFormData({ 
+                                                    ...formData, 
+                                                    companyname: value,
+                                                    customerdisplayname: value ? displayName : formData.customerdisplayname
+                                                });
+                                            }} 
+                                        />
                                         <TextField fullWidth size="small" label="First Name *" error={!!errors.firstname} helperText={errors.firstname} value={formData.firstname} onChange={(e) => setFormData({ ...formData, firstname: e.target.value })} />
                                         <TextField fullWidth size="small" label="Last Name *" error={!!errors.lastname} value={formData.lastname} onChange={(e) => setFormData({ ...formData, lastname: e.target.value })} />
 
@@ -484,7 +579,7 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
                                         <TextField fullWidth size="small" label="Middle Name" value={formData.middlename} onChange={(e) => setFormData({ ...formData, middlename: e.target.value })} />
                                         <TextField fullWidth size="small" label="Suffix" value={formData.suffix} onChange={(e) => setFormData({ ...formData, suffix: e.target.value })} />
 
-                                        <TextField fullWidth size="small" label="Display Name" value={formData.customerdisplayname} onChange={(e) => setFormData({ ...formData, customerdisplayname: e.target.value })} sx={{ bgcolor: '#f8fafc' }} />
+                                        <TextField fullWidth size="small" label="Display Name" value={formData.customerdisplayname} onChange={(e) => setFormData({ ...formData, customerdisplayname: e.target.value })} sx={{ bgcolor: '#f1f5f9' }} />
                                         <TextField fullWidth size="small" label="Email *" error={!!errors.email} helperText={errors.email} value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
                                         <TextField fullWidth size="small" label="Phone *" error={!!errors.phonenumber} value={formData.phonenumber} onChange={(e) => setFormData({ ...formData, phonenumber: e.target.value })} />
 
@@ -556,31 +651,89 @@ const CustomerModal = ({ open, onClose, mode, initialData, onSaveSuccess }) => {
                                     ATTACHMENTS
                                 </Typography>
                                 {/* Keep existing simple table for now as it maps to array */}
-                                <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0' }}>
+                                <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
                                     <Table size="small">
                                         <TableHead sx={{ bgcolor: '#334155' }}>
                                             <TableRow>
-                                                <TableCell sx={{ color: 'white', fontWeight: 600 }}>Document</TableCell>
-                                                <TableCell sx={{ color: 'white', fontWeight: 600 }}>File</TableCell>
-                                                <TableCell sx={{ color: 'white', fontWeight: 600 }}>Expiry Date</TableCell>
-                                                <TableCell sx={{ color: 'white', fontWeight: 600 }}>Actions</TableCell>
+                                                <TableCell sx={{ color: 'white', fontWeight: 600, py: 1.5 }}>Document</TableCell>
+                                                <TableCell sx={{ color: 'white', fontWeight: 600, py: 1.5 }}>File</TableCell>
+                                                <TableCell sx={{ color: 'white', fontWeight: 600, py: 1.5 }}>Expiry Date</TableCell>
+                                                <TableCell sx={{ color: 'white', fontWeight: 600, py: 1.5, width: 80 }}>Actions</TableCell>
                                             </TableRow>
                                         </TableHead>
                                         <TableBody>
                                             {attachmentRows.map((row) => (
                                                 <TableRow key={row.id}>
-                                                    <TableCell>{row.document || 'N/A'}</TableCell>
-                                                    <TableCell>{row.file || 'No file'}</TableCell>
-                                                    <TableCell>{row.expiryDate || 'N/A'}</TableCell>
-                                                    <TableCell>
-                                                        <IconButton size="small" color="error"><DeleteIcon fontSize="small" /></IconButton>
+                                                    <TableCell sx={{ py: 1 }}>
+                                                        <Select
+                                                            fullWidth
+                                                            size="small"
+                                                            value={row.document}
+                                                            onChange={(e) => handleAttachmentChange(row.id, 'document', e.target.value)}
+                                                            displayEmpty
+                                                            sx={{ fontSize: '0.85rem' }}
+                                                        >
+                                                            <MenuItem value=""><em>Select Document</em></MenuItem>
+                                                            {documentTypes.map((doc) => (
+                                                                <MenuItem key={doc.Id} value={doc.Name}>{doc.Name}</MenuItem>
+                                                            ))}
+                                                        </Select>
+                                                    </TableCell>
+                                                    <TableCell sx={{ py: 1 }}>
+                                                        <Button
+                                                            component="label"
+                                                            variant="outlined"
+                                                            size="small"
+                                                            startIcon={<CloudUploadIcon />}
+                                                            fullWidth
+                                                            sx={{ 
+                                                                textTransform: 'none', 
+                                                                borderRadius: 1.5,
+                                                                justifyContent: 'flex-start',
+                                                                color: row.file ? '#2563eb' : '#64748b',
+                                                                borderColor: row.file ? '#2563eb' : '#e2e8f0',
+                                                                fontSize: '0.75rem',
+                                                                whiteSpace: 'nowrap',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis'
+                                                            }}
+                                                        >
+                                                            {row.file ? (typeof row.file === 'string' ? row.file : row.file.name) : 'Upload File'}
+                                                            <input
+                                                                type="file"
+                                                                hidden
+                                                                onChange={(e) => handleAttachmentChange(row.id, 'file', e.target.files[0])}
+                                                            />
+                                                        </Button>
+                                                    </TableCell>
+                                                    <TableCell sx={{ py: 1 }}>
+                                                        <TextField
+                                                            fullWidth
+                                                            size="small"
+                                                            type="date"
+                                                            value={row.expiryDate}
+                                                            onChange={(e) => handleAttachmentChange(row.id, 'expiryDate', e.target.value)}
+                                                            InputLabelProps={{ shrink: true }}
+                                                            InputProps={{
+                                                                sx: { fontSize: '0.85rem' }
+                                                            }}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell sx={{ py: 1 }}>
+                                                        <IconButton 
+                                                            size="small" 
+                                                            color="error"
+                                                            onClick={() => handleRemoveAttachment(row.id)}
+                                                        >
+                                                            <DeleteIcon fontSize="small" />
+                                                        </IconButton>
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
                                             {attachmentRows.length === 0 && (
                                                 <TableRow>
-                                                    <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                                                        No attachments added
+                                                    <TableCell colSpan={4} align="center" sx={{ py: 4, color: 'text.secondary', fontStyle: 'italic' }}>
+                                                        No documents attached. Click "Add Attachment" to begin.
                                                     </TableCell>
                                                 </TableRow>
                                             )}

@@ -815,7 +815,7 @@ const RoleManagementSection = () => {
   const [formData, setFormData] = useState({ role: '' });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all roles
   const fetchRoles = async () => {
@@ -1019,7 +1019,7 @@ const MarketplaceManagementSection = () => {
   const [formData, setFormData] = useState({ marketplace: '', status: 'Active' });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all marketplaces
   const fetchMarketplaces = async () => {
@@ -1296,7 +1296,7 @@ const ModuleManagementSection = () => {
   const [subModuleFormData, setSubModuleFormData] = useState({ subModuleName: '', moduleId: 0, status: 'Active' });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all modules
   const fetchModules = async () => {
@@ -1959,7 +1959,7 @@ const PermissionManagementSection = () => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [expandedModules, setExpandedModules] = useState(new Set());
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   const permissionTypes = ['Full Access', 'View', 'Create', 'Edit', 'Delete', 'Approve', 'All Record'];
 
@@ -2357,7 +2357,7 @@ const ReportPermissionSection = () => {
     const [reportPermissions, setReportPermissions] = useState([]);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     const reportData = [
         { category: 'Sales', reports: ['Sales Summary', 'Sales Summary Details', 'Revenue Report', 'New & Old Invoice Summary', 'Brand Report', 'Customer Report', 'Category Report', 'Cost of goods Report', 'Customer Balance Report'] },
@@ -2607,7 +2607,7 @@ const UsersSection = () => {
     profile_image: ''
   });
   const [message, setMessage] = useState({ type: '', text: '' });
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Pagination & Export State
   const [currentPage, setCurrentPage] = useState(1);
@@ -3332,7 +3332,7 @@ const CatalogManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all catalogs
   const fetchCatalogs = async () => {
@@ -3640,7 +3640,7 @@ const StockLocationManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all stock locations
   const fetchStockLocations = async () => {
@@ -4064,7 +4064,7 @@ const BillFormatManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all bill formats
   const fetchBillFormats = async () => {
@@ -4402,7 +4402,7 @@ const DecimalFormatManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all decimal formats
   const fetchDecimalFormats = async () => {
@@ -4731,7 +4731,7 @@ const PaymentTermsManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all payment terms
   const fetchPaymentTerms = async () => {
@@ -5012,7 +5012,7 @@ const DateFormatManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all date formats
   const fetchDateFormats = async () => {
@@ -5303,7 +5303,7 @@ const CurrencyManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all currencies
   const fetchCurrencies = async () => {
@@ -5743,7 +5743,7 @@ const DashboardContentViewSettingsSection = () => {
   const [dashboardContentViews, setDashboardContentViews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Dashboard content sections that can be controlled
   const dashboardContentSections = [
@@ -6085,7 +6085,7 @@ const VATManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all VATs
   const fetchVATs = async () => {
@@ -6450,7 +6450,7 @@ const StockCheckManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all catalogs for dropdown
   const fetchCatalogs = async () => {
@@ -6793,7 +6793,7 @@ const BankAccountManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all bank accounts
   const fetchBankAccounts = async () => {
@@ -7165,7 +7165,7 @@ const VehicleManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all vehicles
   const fetchVehicles = async () => {
@@ -7465,7 +7465,7 @@ const DriverManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch all drivers
   const fetchDrivers = async () => {
@@ -7808,7 +7808,7 @@ const SalesReturnManagementSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Helper to get parent condition name
   const getParentConditionName = (sr) => {
@@ -8242,7 +8242,7 @@ const ChartOfAccountsSection = () => {
   });
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
   // Fetch Accounts
   const fetchAccounts = async () => {

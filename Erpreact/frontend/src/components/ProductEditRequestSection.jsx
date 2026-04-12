@@ -56,7 +56,7 @@ const ProductEditRequestSection = ({
         const id = user.Id ?? user.id;
         return id != null && String(id).trim() !== '' ? String(id).trim() : '';
     })();
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const navigate = useNavigate();
 
     /** Match legacy DB values Editrequest / Deleterequest (API may vary spacing or casing). */

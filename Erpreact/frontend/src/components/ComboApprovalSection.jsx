@@ -94,7 +94,7 @@ const ComboApprovalSection = ({ onNavigate }) => {
         if (u.user && typeof u.user === 'object') return resolveUserId(u.user);
         return '';
     };
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const navigate = useNavigate();
     const theme = useTheme();
     const isSmall = useMediaQuery(theme.breakpoints.down('md'));

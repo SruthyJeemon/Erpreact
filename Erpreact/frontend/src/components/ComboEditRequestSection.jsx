@@ -41,7 +41,7 @@ const ComboEditRequestSection = ({ onNavigate }) => {
   const [modalData, setModalData] = useState({ commentId: '', status: '', comments: '' });
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+  const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
   const navigate = useNavigate();
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down('md'));

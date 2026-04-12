@@ -54,7 +54,7 @@ const ProductApprovalDetails = () => {
     const [activeTab, setActiveTab] = useState(0);
     const [selectedVariant, setSelectedVariant] = useState(null);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Helper to safely access object properties case-insensitively
     const v = (obj, key) => {
@@ -615,7 +615,7 @@ const ProductApprovalDetails = () => {
                                                 const cleanSrc = src.trim();
                                                 const fullSrc = cleanSrc.startsWith('http')
                                                     ? cleanSrc
-                                                    : `${import.meta.env.VITE_API_URL || 'http://localhost:5023'}${cleanSrc.startsWith('/') ? '' : '/'}${cleanSrc}`;
+                                                    : `${(import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '')}${cleanSrc.startsWith('/') ? '' : '/'}${cleanSrc}`;
 
                                                 // Use Resize path if possible for better performance/quality match, else original
                                                 const bestSrc = fullSrc.includes('/Thumb/') ? fullSrc.replace('/Thumb/', '/Resize/') : fullSrc;

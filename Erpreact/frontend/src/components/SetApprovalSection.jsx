@@ -37,7 +37,7 @@ import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import Swal from 'sweetalert2';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
 const getSetWorkStatusChip = (ws) => {
     const n = Number(ws);
@@ -63,7 +63,7 @@ const normalizeProductsetView = (data, fallbackSetId) => {
           ? `${s.Numberofpieces} pc(s)`
           : '—';
 
-    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_BASE = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     return {
         id: sid,

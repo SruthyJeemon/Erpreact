@@ -38,6 +38,15 @@ import {
 } from '@mui/icons-material';
 import Swal from 'sweetalert2';
 
+/** Issued Salesquoteno should show in the grid even when Status is Draft (re-opened for edit after approval). */
+const displayQuoteNo = (quote) => {
+    const raw = String(quote?.quoteNo ?? '').trim();
+    const hasIssuedNo = raw.length > 0 && raw.toLowerCase() !== 'draft';
+    if (hasIssuedNo) return raw;
+    if ((quote?.status || '').toLowerCase() === 'draft') return 'Draft';
+    return raw || 'Draft';
+};
+
 const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
     const [allQuotes, setAllQuotes] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -50,7 +59,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     useEffect(() => { fetchQuotes(); }, []);
 
@@ -80,23 +89,120 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
         }
     };
 
-    const handleDelete = (id) => {
-        Swal.fire({
-            title: 'Are you sure?',
-            text: "You won't be able to revert this!",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            cancelButtonColor: '#3085d6',
-            confirmButtonText: 'Yes, delete it!'
-        }).then(async (result) => {
-            if (result.isConfirmed) {
-                try {
-                    const res = await fetch(`${API_URL}/api/salesquote/${id}`, { method: 'DELETE' });
-                    if (res.ok) { Swal.fire('Deleted!', 'Quote has been deleted.', 'success'); fetchQuotes(); }
-                } catch { Swal.fire('Error', 'Failed to delete', 'error'); }
+    const handleDeleteClick = async (quote) => {
+        const id = quote.id;
+        const userid = getCurrentUserId();
+        const quoteNoLabel = displayQuoteNo(quote);
+
+        let head = null;
+        try {
+            const res = await fetch(`${API_URL}/api/salesquote/details/${encodeURIComponent(String(id))}`);
+            const data = await res.json().catch(() => ({}));
+            head = data?.header || data?.Header || null;
+            if (!res.ok || !data?.success || !head) {
+                Swal.fire('Error', data?.message || 'Failed to fetch quote details', 'error');
+                return;
             }
+        } catch {
+            Swal.fire('Error', 'Network error', 'error');
+            return;
+        }
+
+        const owner = String(head.Userid || head.userid || '').trim();
+        const status = String(head.Status || head.status || '').trim();
+
+        if (!userid || !owner || userid.toLowerCase() !== owner.toLowerCase()) {
+            Swal.fire('Cancelled', 'Deleting is not possible', 'error');
+            return;
+        }
+
+        const st = status.toLowerCase();
+
+        if (['approved', 'rejected', 'converted'].includes(st)) {
+            const r1 = await Swal.fire({
+                title: 'Deleting is not possible. Already approved or rejected the sales quote. Do you want to delete this salesquote?',
+                icon: 'info',
+                showCancelButton: true,
+                confirmButtonText: 'Yes',
+                cancelButtonText: 'Cancel'
+            });
+            if (!r1.isConfirmed) {
+                Swal.fire('Cancelled', 'Your Data is safe', 'error');
+                return;
+            }
+            const r2 = await Swal.fire({
+                title: 'Delete request',
+                input: 'textarea',
+                inputLabel: 'Reason',
+                inputPlaceholder: 'Enter reason...',
+                showCancelButton: true,
+                confirmButtonText: 'Submit',
+                cancelButtonText: 'Cancel'
+            });
+            if (!r2.isConfirmed) {
+                Swal.fire('Cancelled', 'Your Data is safe', 'error');
+                return;
+            }
+            const reason = String(r2.value || '').trim();
+            try {
+                const send = await fetch(`${API_URL}/api/salesquote/deleterequest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: String(id), userid, reason })
+                });
+                const resp = await send.json().catch(() => ({}));
+                if (send.ok && resp?.success) {
+                    Swal.fire('Success', resp?.message || 'Delete request sent', 'success');
+                    fetchQuotes();
+                } else {
+                    Swal.fire('Info', resp?.message || 'Unable to send delete request', 'info');
+                }
+            } catch {
+                Swal.fire('Error', 'Network error', 'error');
+            }
+            return;
+        }
+
+        if (st === 'delete request sent') {
+            Swal.fire({
+                icon: 'info',
+                title: 'Information',
+                text: 'Already sent the delete request. Waiting for manager approval'
+            });
+            return;
+        }
+
+        const r = await Swal.fire({
+            title: `Do you want to delete this bill ${quoteNoLabel}?`,
+            icon: 'info',
+            input: 'text',
+            inputLabel: 'Type "YES" to confirm',
+            showCancelButton: true,
+            confirmButtonText: 'Submit',
+            cancelButtonText: 'Cancel'
         });
+        const typed = String(r.value ?? '').trim().toUpperCase();
+        if (!r.isConfirmed || typed !== 'YES') {
+            Swal.fire('Cancelled', 'Your Data is safe', 'error');
+            return;
+        }
+
+        try {
+            const del = await fetch(`${API_URL}/api/salesquote/soft-delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: String(id), userid })
+            });
+            const resp = await del.json().catch(() => ({}));
+            if (del.ok && resp?.success) {
+                Swal.fire({ title: 'Alert!', text: resp?.message || 'Deleted successfully', icon: 'success' });
+                fetchQuotes();
+            } else {
+                Swal.fire('Error', resp?.message || 'Failed to delete', 'error');
+            }
+        } catch {
+            Swal.fire('Error', 'Failed to delete', 'error');
+        }
     };
 
     const getCurrentUserId = () => {
@@ -145,17 +251,21 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                 }
 
                 const reason = String(result.value || '').trim();
-                const send = await fetch(`${API_URL}/api/salesquote/editrequest`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: String(id), userid, reason })
+                const customerid = String(head.Customerid ?? head.customerid ?? '').trim();
+                const qs = new URLSearchParams({
+                    reasonforedit: reason,
+                    customerid,
+                    salesid: String(id),
+                    requesttype: 'Editrequest'
                 });
+                const send = await fetch(`${API_URL}/api/Sales/Salesbillreasonforeditsalesquote?${qs.toString()}`);
                 const resp = await send.json().catch(() => ({}));
-                if (send.ok && resp?.success) {
-                    Swal.fire('Success', resp?.message || 'Edit request sent', 'success');
+                const outMsg = resp?.msg ?? resp?.Msg ?? '';
+                if (send.ok && outMsg && !String(outMsg).startsWith('Error:')) {
+                    Swal.fire('Success', outMsg, 'success');
                     fetchQuotes();
                 } else {
-                    Swal.fire('Info', resp?.message || 'Unable to send edit request', 'info');
+                    Swal.fire('Info', outMsg || 'Unable to send edit request', 'info');
                 }
                 return;
             }
@@ -434,9 +544,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                             ) : (
                                 currentItems.map((quote) => {
                                     const sc = statusColor(quote.status);
-                                    const quoteNoText = (quote.status || '').toLowerCase() === 'draft'
-                                        ? 'Draft'
-                                        : (quote.quoteNo || 'Draft');
+                                    const quoteNoText = displayQuoteNo(quote);
                                     return (
                                         <TableRow key={quote.id} hover sx={{ '&:last-child td': { border: 0 } }}>
                                             <TableCell sx={{ fontWeight: 600, color: '#002b5c' }}>{quoteNoText}</TableCell>
@@ -462,7 +570,7 @@ const SalesQuoteSection = ({ onAddQuote, onEditQuote, onViewQuote }) => {
                                                         </IconButton>
                                                     </Tooltip>
                                                     <Tooltip title="Delete">
-                                                        <IconButton size="small" onClick={() => handleDelete(quote.id)} sx={{ color: '#ef4444', bgcolor: '#fef2f2', '&:hover': { bgcolor: '#fee2e2' } }}>
+                                                        <IconButton size="small" onClick={() => handleDeleteClick(quote)} sx={{ color: '#ef4444', bgcolor: '#fef2f2', '&:hover': { bgcolor: '#fee2e2' } }}>
                                                             <DeleteIcon fontSize="small" />
                                                         </IconButton>
                                                     </Tooltip>

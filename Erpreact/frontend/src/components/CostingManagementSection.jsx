@@ -86,7 +86,7 @@ const CostingManagementSection = () => {
     const [loadingSessions, setLoadingSessions] = useState(false);
     const [serviceProviders, setServiceProviders] = useState([]);
     const [loadingServiceProviders, setLoadingServiceProviders] = useState(false);
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const MVC_BASE = import.meta.env.VITE_MVC_BASE || '';
     // Pagination variables
     const filteredCount = 3; // Placeholder for actual data filtering

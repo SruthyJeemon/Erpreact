@@ -57,7 +57,7 @@ const PurchaseApprovalSection = ({ onBack, onViewBill, hideHeader = false }) => 
     const [order, setOrder] = useState('desc');
     const [orderBy, setOrderBy] = useState('Bill_date');
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     const fetchPendingApprovals = async () => {
         setLoading(true);

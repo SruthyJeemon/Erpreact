@@ -101,7 +101,7 @@ const ComboSection = () => {
         try {
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             const catId = user.Catelogid || user.catelogid || '';
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/product/getproductitemdetailsfull?pageIndex=${page + 1}&pageSize=${rowsPerPage}&itemname=${encodeURIComponent(searchTerm)}&catelogid=${catId}`);
             const data = await res.json();
             setCombos(Array.isArray(data) ? data : (data.List1 || data.list1 || data || []));
@@ -131,7 +131,7 @@ const ComboSection = () => {
         }
         setIsSearchingItems(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
             const catId = user.Catelogid || user.catelogid || '1001';
             const response = await fetch(`${API_URL}/api/product/getproductname?search=${encodeURIComponent(value)}&catelogid=${catId}`);
@@ -261,7 +261,7 @@ const ComboSection = () => {
 
         setFormLoading(true);
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const user = JSON.parse(localStorage.getItem('user') || '{}');
 
             const payload = {
@@ -386,7 +386,7 @@ const ComboSection = () => {
             // If approved, non-admins must request deletion
             if (isApproved) {
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                     const checkRes = await fetch(`${API_URL}/api/product/checkdeleterequestcombo`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -501,7 +501,7 @@ const ComboSection = () => {
         if (result.isConfirmed) {
             if (result.value?.trim().toUpperCase() === 'YES') {
                 try {
-                    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                     const res = await fetch(`${API_URL}/api/product/deleteproductcombo/${id}`, { method: 'DELETE' });
                     const data = await res.json();
                     if (data.Success || data.success) {
@@ -544,7 +544,7 @@ const ComboSection = () => {
 
     const handleView = async (id) => {
         try {
-            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
             const res = await fetch(`${API_URL}/api/product/getproductcomboedit/${id}`);
             if (!res.ok) throw new Error('API Error');
             const data = await res.json();
@@ -783,7 +783,7 @@ const ComboSection = () => {
                                                         // If manager already approved an edit request for this combo+user, allow edit directly.
                                                         try {
                                                             const currentUserId = String(user.Userid || user.userid || '');
-                                                            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                                                            const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                                                             const check = await fetch(`${API_URL}/api/combo/edit-requests/approved?comboId=${encodeURIComponent(String(combo.id || combo.Id))}&userid=${encodeURIComponent(currentUserId)}`);
                                                             const checkData = await check.json().catch(() => ({}));
                                                             if (check.ok && checkData?.approved === true) {
@@ -812,7 +812,7 @@ const ComboSection = () => {
                                                             });
                                                             if (reason) {
                                                                 const currentUserId = user.Userid || user.userid || '';
-                                                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                                                                const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                                                                 await fetch(`${API_URL}/api/product/savecomboeditcommentsdelete`, {
                                                                     method: 'POST',
                                                                     headers: { 'Content-Type': 'application/json' },
@@ -1139,7 +1139,7 @@ const ComboSection = () => {
                                                     onClick={async () => {
                                                         if (img.isExisting && img.id) {
                                                             try {
-                                                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+                                                                const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
                                                                 const res = await fetch(`${API_URL}/api/product/deletecomboimage/${comboFormData.setId}/${img.id}`, { method: 'DELETE' });
                                                                 const d = await res.json();
                                                                 if (d.success) {

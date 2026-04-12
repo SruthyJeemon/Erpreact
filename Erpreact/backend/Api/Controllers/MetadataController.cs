@@ -149,5 +149,85 @@ namespace Api.Controllers
                 return StatusCode(500, new { message = ex.Message });
             }
         }
+
+        /// <summary>Active currencies (Tbl_Currency) for sales bill rate + Currency id.</summary>
+        [HttpGet("currencies")]
+        public async Task<IActionResult> GetCurrencies()
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                var rows = new List<Dictionary<string, object>>();
+                using (var connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+                    using (var cmd = new SqlCommand(
+                        """
+                        SELECT Id, Currency, Rate
+                        FROM Tbl_Currency
+                        WHERE (Isdelete IS NULL OR Isdelete = '' OR Isdelete = '0' OR Isdelete = 0)
+                        ORDER BY Id
+                        """,
+                        connection))
+                    {
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new Dictionary<string, object>();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null! : reader.GetValue(i);
+                                rows.Add(row);
+                            }
+                        }
+                    }
+                }
+                return Ok(new { success = true, data = rows });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
+        /// <summary>Terms options (Tbl_Termsandcondition) — bill stores Terms column as Id string.</summary>
+        [HttpGet("terms")]
+        public async Task<IActionResult> GetTermsAndConditions()
+        {
+            try
+            {
+                string connectionString = _configuration.GetConnectionString("DefaultConnection");
+                var rows = new List<Dictionary<string, object>>();
+                using (var connection = new SqlConnection(connectionString))
+                {
+                    await connection.OpenAsync();
+                    using (var cmd = new SqlCommand(
+                        """
+                        SELECT Id, Type, Terms
+                        FROM Tbl_Termsandcondition
+                        WHERE (Isdelete IS NULL OR Isdelete = '' OR Isdelete = '0' OR Isdelete = 0)
+                        ORDER BY Id
+                        """,
+                        connection))
+                    {
+                        using (var reader = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var row = new Dictionary<string, object>();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null! : reader.GetValue(i);
+                                rows.Add(row);
+                            }
+                        }
+                    }
+                }
+                return Ok(new { success = true, data = rows });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
     }
 }

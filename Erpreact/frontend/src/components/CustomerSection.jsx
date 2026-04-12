@@ -87,11 +87,13 @@ const CustomerSection = () => {
     const [totalCount, setTotalCount] = useState(0);
     const [message, setMessage] = useState({ type: '', text: '' });
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+    /** Sp_Salesbill Q8 totals keyed by customer Id (same as customer-view sidebar) */
+    const [openingBalances, setOpeningBalances] = useState({});
 
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     // User role check if needed
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -106,6 +108,67 @@ const CustomerSection = () => {
     useEffect(() => {
         fetchCustomers(currentPage, debouncedSearchTerm);
     }, [currentPage, debouncedSearchTerm, itemsPerPage]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const userid = String(user?.Userid || user?.userid || '').trim();
+        const numericIds = [...new Set(
+            customers
+                .map(c => parseInt(String(c.Id ?? c.id ?? c.Customerid), 10))
+                .filter(n => !Number.isNaN(n) && n > 0)
+        )];
+
+        if (!userid || numericIds.length === 0) {
+            setOpeningBalances({});
+            return;
+        }
+
+        (async () => {
+            try {
+                const obRes = await fetch(
+                    `${API_URL}/api/customer/opening-balances?userid=${encodeURIComponent(userid)}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ customerIds: numericIds })
+                    }
+                );
+                const obData = await obRes.json().catch(() => ({}));
+                if (cancelled) return;
+                if (obRes.ok && obData.success && obData.balances && typeof obData.balances === 'object') {
+                    setOpeningBalances(obData.balances);
+                } else {
+                    setOpeningBalances({});
+                }
+            } catch (e) {
+                console.error('Error loading opening balances:', e);
+                if (!cancelled) setOpeningBalances({});
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [customers, API_URL, user?.Userid, user?.userid]);
+
+    const openingBalanceForCustomer = (customer) => {
+        const idKey = String(customer.Id ?? customer.id ?? customer.Customerid ?? '');
+        const ob = openingBalances[idKey];
+        const sum = ob?.sum ?? ob?.Sum;
+        if (ob && sum != null && sum !== '') {
+            const numeric = parseFloat(String(sum).replace(/,/g, ''));
+            return {
+                displayAmount: String(sum),
+                numeric: Number.isNaN(numeric) ? 0 : numeric,
+                currency: ob.currency ?? ob.Currency ?? customer.Currency ?? 'AED'
+            };
+        }
+        const raw = customer.Openingbalance ?? customer.openingbalance;
+        const numeric = parseFloat(raw) || 0;
+        return {
+            displayAmount: numeric.toFixed(2),
+            numeric,
+            currency: customer.Currency || 'AED'
+        };
+    };
 
     const fetchCustomers = async (page = 1, search = '') => {
         setLoading(true);
@@ -343,7 +406,9 @@ const CustomerSection = () => {
                         {loading ? (
                             <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}><CircularProgress /></Box>
                         ) : (
-                            currentItems.map((customer) => (
+                            currentItems.map((customer) => {
+                                const obRow = openingBalanceForCustomer(customer);
+                                return (
                                 <Card key={customer.Id || customer.id} sx={{ borderRadius: 3, boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                                     <CardContent sx={{ p: 2 }}>
                                         <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 2 }}>
@@ -385,8 +450,8 @@ const CustomerSection = () => {
                                             </Stack>
                                             <Stack direction="row" spacing={1.5} alignItems="center">
                                                 <Typography variant="caption" sx={{ fontWeight: 600, color: '#64748b' }}>BALANCE:</Typography>
-                                                <Typography variant="body2" fontWeight={700} color={parseFloat(customer.Openingbalance || 0) > 0 ? '#ef4444' : '#1e293b'}>
-                                                    {customer.Currency || 'AED'} {parseFloat(customer.Openingbalance || 0).toFixed(2)}
+                                                <Typography variant="body2" fontWeight={700} color={obRow.numeric > 0 ? '#ef4444' : '#1e293b'}>
+                                                    {obRow.currency} {obRow.displayAmount}
                                                 </Typography>
                                             </Stack>
                                         </Stack>
@@ -423,7 +488,7 @@ const CustomerSection = () => {
                                         </Box>
                                     </CardContent>
                                 </Card>
-                            ))
+                            );})
                         )}
                     </Stack>
                 ) : (
@@ -453,7 +518,9 @@ const CustomerSection = () => {
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    currentItems.map((customer) => (
+                                    currentItems.map((customer) => {
+                                        const obRow = openingBalanceForCustomer(customer);
+                                        return (
                                         <TableRow key={customer.Id || customer.id} hover sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
                                             <TableCell>
                                                 <Stack direction="row" spacing={2} alignItems="center">
@@ -480,8 +547,8 @@ const CustomerSection = () => {
                                             <TableCell>{customer.Email || 'N/A'}</TableCell>
                                             <TableCell sx={{ whiteSpace: 'nowrap' }}>{customer.Phonenumber || customer.Mobilenumber || 'N/A'}</TableCell>
                                             <TableCell>
-                                                <Typography variant="body2" fontWeight={600} color={parseFloat(customer.Openingbalance || 0) > 0 ? '#ef4444' : '#1e293b'}>
-                                                    {parseFloat(customer.Openingbalance || 0).toFixed(2)}
+                                                <Typography variant="body2" fontWeight={600} color={obRow.numeric > 0 ? '#ef4444' : '#1e293b'}>
+                                                    {obRow.displayAmount}
                                                 </Typography>
                                             </TableCell>
                                             <TableCell align="center">
@@ -519,7 +586,7 @@ const CustomerSection = () => {
                                                 </Stack>
                                             </TableCell>
                                         </TableRow>
-                                    ))
+                                    );})
                                 )}
                             </TableBody>
                         </Table>

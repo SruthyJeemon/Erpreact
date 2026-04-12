@@ -45,6 +45,7 @@ import SalesQuoteSection from './SalesQuoteSection';
 import SalesQuoteCreate from './SalesQuoteCreate';
 import SalesQuoteApprovalSection from './SalesQuoteApprovalSection';
 import SalesQuoteApprovalView from './SalesQuoteApprovalView';
+import SalesBillApprovalSection from './SalesBillApprovalSection';
 import ComboSection from './ComboSection';
 import ReportSection from './ReportSection';
 import logo from '../assets/asas_logo.png';
@@ -62,6 +63,7 @@ import StockTransferApprovalFinal from './StockTransferApprovalFinal';
 import StockAdjustmentSection from './StockAdjustmentSection';
 import StockAdjustmentApprovalSection from './StockAdjustmentApprovalSection';
 import PackingListSection from './PackingListSection';
+import PackingListEntryPage from './PackingListEntryPage';
 
 
 
@@ -305,6 +307,8 @@ const SUBMODULE_SECTION_MAPPING = {
   'purchase-bills': 'purchase-bill-view',
   'sales quote approval': 'sales-quote-approval',
   'salesquote approval': 'sales-quote-approval',
+  'sales bill approval': 'sales-bill-approval',
+  'salesbill approval': 'sales-bill-approval',
   'stock transfer approval': 'stock-transfer-approval',
   'stocktransfer approval': 'stock-transfer-approval',
   'stock-transfer-approval': 'stock-transfer-approval',
@@ -337,6 +341,7 @@ const SUBMODULE_SECTION_MAPPING = {
   'sales-quote': 'sales-quote',
   'salesquote': 'sales-quote',
   'sales-quote-approval': 'sales-quote-approval',
+  'sales-bill-approval': 'sales-bill-approval',
   'workflow': 'workflow',
   'module-1008': 'workflow',
   'purchase approval': 'purchase-approval-hub',
@@ -355,6 +360,20 @@ const SUBMODULE_SECTION_MAPPING = {
   'analytics': 'report-section',
   'approval-set-hub': 'approval-set-hub'
 };
+
+/** DB may still expose legacy id for quote approval submenu only. */
+function isSalesQuoteApprovalSubmenuSelected(submenuId, activeSection) {
+  if (submenuId !== 'sales-quote-approval') return false;
+  return (
+    activeSection === 'sales-quote-approval' ||
+    (activeSection && activeSection.startsWith('sales-quote-approval-view/'))
+  );
+}
+
+function isSalesBillApprovalSubmenuSelected(submenuId, activeSection) {
+  if (submenuId !== 'sales-bill-approval') return false;
+  return activeSection === 'sales-bill-approval';
+}
 
 // SVG Icon Component Helper
 const IconSVG = ({ name, size = 20, className = '' }) => {
@@ -555,6 +574,15 @@ const IconSVG = ({ name, size = 20, className = '' }) => {
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line>
       </svg>
     ),
+    /** Sales bill / invoice approval — document with dollar mark (distinct from quote checklist icon). */
+    'salesbillapproval': (
+      <svg width={sizeStr} height={sizeStr} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="12" y1="10" x2="12" y2="18" />
+        <path d="M15 12.5c0-1.2-.9-2-2.2-2H11c-1.1 0-2 .8-2 1.8 0 1 .9 1.7 2 1.7h2c1.1 0 2 .7 2 1.7 0 1-.9 1.8-2 1.8h-1.8c-1.3 0-2.2-.8-2.2-2" />
+      </svg>
+    ),
     'inventory': (
       <svg width={sizeStr} height={sizeStr} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
@@ -617,6 +645,7 @@ const Dashboard = () => {
       setActiveSection(normalizedSection);
     }
   }, [location]);
+
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768); // Open by default on desktop
   const [isHovered, setIsHovered] = useState(false);
   const theme = useTheme();
@@ -1028,6 +1057,10 @@ const Dashboard = () => {
       'sales-quote': 'salesquote',
       'quote': 'salesquote',
       'quotes': 'salesquote',
+      'sales bill approval': 'salesbillapproval',
+      'salesbill approval': 'salesbillapproval',
+      'sales-bill-approval': 'salesbillapproval',
+      'invoice approval': 'salesbillapproval',
       'approval set hub': 'approvals',
       'approval-set-hub': 'approvals'
     };
@@ -1194,20 +1227,22 @@ const Dashboard = () => {
           const accessibleSubModules = allSubModules;
           console.log(`✅ Accessible submodules for module ${moduleId}(${moduleName}): `, accessibleSubModules.length, accessibleSubModules);
 
-          // Build submenus from database submodules
-          let submenus = accessibleSubModules.map(sm => {
+          // Build submenus from database submodules and deduplicate by ID
+          const seenSubmenuIds = new Set();
+          let submenus = [];
+          
+          for (const sm of accessibleSubModules) {
             const smId = sm.Id || sm.id;
             const smName = sm.SubModuleName || sm.subModuleName;
 
             // Map database submodule names to section IDs
-            // Use global mapping for known administrative sections
             const normalizedSM = smName.toLowerCase().trim();
             const normalizedMod = (moduleName || '').toLowerCase().trim();
 
             let adminSectionId = `module-${moduleId}-sub-${smId}`;
             let foundMapping = false;
 
-            // 1. Try specific mappings for Approvals FIRST to prevent collisions with global names like "Items"
+            // 1. Try specific mappings for Approvals FIRST
             if (normalizedMod === 'approvals' && (normalizedSM === 'product' || normalizedSM === 'products')) {
               adminSectionId = 'approval-product-hub';
               foundMapping = true;
@@ -1223,8 +1258,21 @@ const Dashboard = () => {
             } else if (normalizedMod === 'approvals' && (normalizedSM.includes('stock transfer') || normalizedSM.includes('stocktransfer'))) {
               adminSectionId = 'stock-transfer-approval';
               foundMapping = true;
+            } else if (normalizedMod === 'approvals' && (
+              normalizedSM.includes('sales') && normalizedSM.includes('bill') && normalizedSM.includes('approval') &&
+              !normalizedSM.includes('quote')
+            )) {
+              adminSectionId = 'sales-bill-approval';
+              foundMapping = true;
+            } else if (normalizedMod === 'approvals' && (
+              normalizedSM === 'salesquote' ||
+              normalizedSM === 'sales quote' ||
+              (normalizedSM.includes('sales') && normalizedSM.includes('quote') && normalizedSM.includes('approval'))
+            )) {
+              // Do not use global "salesquote" → sales-quote here; under Approvals this is the manager approval hub.
+              adminSectionId = 'sales-quote-approval';
+              foundMapping = true;
             }
-
 
             // 2. If not an approval override, try exact match in global mapping
             if (!foundMapping && SUBMODULE_SECTION_MAPPING[normalizedSM]) {
@@ -1234,7 +1282,6 @@ const Dashboard = () => {
 
             // 3. Try partial matches if still not found
             if (!foundMapping) {
-              // Try partial match - mapping key must be part of the submodule name
               for (const [key, value] of Object.entries(SUBMODULE_SECTION_MAPPING)) {
                 if (normalizedSM.includes(key)) {
                   adminSectionId = value;
@@ -1246,8 +1293,6 @@ const Dashboard = () => {
 
             // If no administrative mapping, use hierarchical URL structure
             if (!foundMapping) {
-              // Create clean, URL-friendly hierarchical ID using forward slashes
-              // Convert to title case and preserve spaces
               const toTitleCase = (str) => str.split(' ').map(word =>
                 word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
               ).join('');
@@ -1257,23 +1302,30 @@ const Dashboard = () => {
               adminSectionId = `${modSlug}/${smSlug}`;
             }
 
+            // Skip if this section ID already exists in this module’s submenus
+            if (seenSubmenuIds.has(adminSectionId)) {
+              console.warn(`Skipping duplicate submodule ID "${adminSectionId}" for "${smName}"`);
+              continue;
+            }
+            seenSubmenuIds.add(adminSectionId);
+
             console.log(`Mapping submodule "${smName}" in "${moduleName}" to ID: ${adminSectionId}`);
 
-            // Get icon using the centralized icon mapping function
             const submenuIcon = getIconForMenu(smName, 'submodule');
-
-            // Override labels for Approvals hubs
             let displayLabel = smName;
             if (adminSectionId === 'approval-item-hub') displayLabel = 'Approval-Items';
             if (adminSectionId === 'approval-combo-hub') displayLabel = 'Approval-Combo';
+            if (adminSectionId === 'sales-quote-approval') displayLabel = 'Sales quote approval';
+            if (adminSectionId === 'sales-bill-approval') displayLabel = 'Sales bill approval';
             if (adminSectionId === 'inventory-pickupnotification') displayLabel = 'Pickup Notification';
 
-            return {
+            submenus.push({
               id: adminSectionId,
               label: displayLabel,
               icon: submenuIcon
-            };
-          });
+            });
+          }
+
 
           // Add module to menu (even if no submodules, if module itself is accessible)
           // Use 'admin' as ID if it's Admin Settings module for consistency
@@ -1407,6 +1459,48 @@ const Dashboard = () => {
           };
           menuItemsList.push(inventoryModule);
         }
+
+        // Ensure Sales module has all necessary submodules (Customer, Sales Quote)
+        let salesModule = menuItemsList.find(item => 
+          item.label.toLowerCase() === 'sales' || item.id === 'sales' || item.id === 'module-sales'
+        );
+        if (!salesModule) {
+           // If sales module doesn't exist at all, create it (could happen for some roles)
+           salesModule = {
+             id: 'sales',
+             label: 'Sales',
+             icon: getIconForMenu('Sales', 'module'),
+             submenus: []
+           };
+           menuItemsList.push(salesModule);
+        }
+
+        if (salesModule) {
+          // Add Customer submodule if missing
+          const hasCustomer = salesModule.submenus.some(sm => 
+            sm.id === 'customer' || sm.label.toLowerCase() === 'customer'
+          );
+          if (!hasCustomer) {
+            salesModule.submenus.push({
+              id: 'customer',
+              label: 'Customer',
+              icon: getIconForMenu('Users', 'submodule')
+            });
+          }
+
+          // Add Sales Quote submodule if missing
+          const hasSalesQuote = salesModule.submenus.some(sm => 
+            sm.id === 'sales-quote' || sm.label.toLowerCase().includes('sales quote')
+          );
+          if (!hasSalesQuote) {
+            salesModule.submenus.push({
+              id: 'sales-quote',
+              label: 'Sales Quote',
+              icon: getIconForMenu('Sales Quote', 'submodule')
+            });
+          }
+        }
+
 
         // Inject Packing List submenu for Warehouse Staff roles if missing
         if (inventoryModule) {
@@ -1559,6 +1653,24 @@ const Dashboard = () => {
               id: 'purchase-approval-hub',
               label: 'Purchase Approval',
               icon: getIconForMenu('Purchase Approval', 'submodule')
+            });
+          }
+
+          const hasSalesQuoteApproval = approvalsModule.submenus.some(sm => sm.id === 'sales-quote-approval');
+          if (rlMgr.includes('manager') && !hasSalesQuoteApproval) {
+            approvalsModule.submenus.push({
+              id: 'sales-quote-approval',
+              label: 'Sales quote approval',
+              icon: getIconForMenu('Sales Quote', 'submodule')
+            });
+          }
+
+          const hasSalesBillApproval = approvalsModule.submenus.some(sm => sm.id === 'sales-bill-approval');
+          if (rlMgr.includes('manager') && !hasSalesBillApproval) {
+            approvalsModule.submenus.push({
+              id: 'sales-bill-approval',
+              label: 'Sales bill approval',
+              icon: getIconForMenu('Sales bill approval', 'submodule')
             });
           }
         }
@@ -1840,7 +1952,12 @@ const Dashboard = () => {
               const hasSubmenus = item.submenus && item.submenus.length > 0;
               const isExpanded = expandedMenus.has(item.id);
               const isActive = activeSection === item.id ||
-                (hasSubmenus && item.submenus.some(sub => sub.id === activeSection));
+                (hasSubmenus && item.submenus.some(sub =>
+                  sub.id === activeSection ||
+                  (sub.id === 'stock-packinglist' && activeSection.startsWith('stock-packinglist/entry')) ||
+                  isSalesQuoteApprovalSubmenuSelected(sub.id, activeSection) ||
+                  isSalesBillApprovalSubmenuSelected(sub.id, activeSection)
+                ));
 
               return (
                 <Box key={item.id} sx={{ mb: 0.5 }}>
@@ -1898,10 +2015,16 @@ const Dashboard = () => {
                   {isSidebarExpanded && hasSubmenus && (
                     <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                       <List component="div" disablePadding sx={{ mt: 0.5, mb: 1 }}>
-                        {item.submenus.map((submenu) => (
+                        {item.submenus.map((submenu) => {
+                          const subSelected =
+                            activeSection === submenu.id ||
+                            (submenu.id === 'stock-packinglist' && activeSection.startsWith('stock-packinglist/entry')) ||
+                            isSalesQuoteApprovalSubmenuSelected(submenu.id, activeSection) ||
+                            isSalesBillApprovalSubmenuSelected(submenu.id, activeSection);
+                          return (
                           <ListItemButton
                             key={submenu.id}
-                            selected={activeSection === submenu.id}
+                            selected={subSelected}
                             onClick={(e) => handleSubmenuClick(submenu.id, e)}
                             sx={{
                               borderRadius: '24px',
@@ -1910,7 +2033,7 @@ const Dashboard = () => {
                               pl: isSidebarExpanded ? 4 : 1, // Adjusted padding to accommodate icon
                               pr: 2,
                               py: 0.8,
-                              color: activeSection === submenu.id ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+                              color: subSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
                               backgroundColor: 'transparent !important',
                               transition: 'all 0.2s ease',
                               '&:hover': {
@@ -1928,7 +2051,7 @@ const Dashboard = () => {
                             <ListItemIcon sx={{
                               minWidth: isSidebarExpanded ? 32 : 0,
                               mr: isSidebarExpanded ? 0 : 'auto',
-                              color: activeSection === submenu.id ? '#3b82f6' : 'rgba(255, 255, 255, 0.4)',
+                              color: subSelected ? '#3b82f6' : 'rgba(255, 255, 255, 0.4)',
                               justifyContent: 'center',
                               transition: 'color 0.2s'
                             }}>
@@ -1940,12 +2063,13 @@ const Dashboard = () => {
                                 primary={submenu.label}
                                 primaryTypographyProps={{
                                   fontSize: '0.8125rem',
-                                  fontWeight: activeSection === submenu.id ? 700 : 500
+                                  fontWeight: subSelected ? 700 : 500
                                 }}
                               />
                             )}
                           </ListItemButton>
-                        ))}
+                          );
+                        })}
                       </List>
                     </Collapse>
                   )}
@@ -2288,6 +2412,13 @@ const Dashboard = () => {
           <SalesQuoteApprovalView
             quoteId={activeSection.split('/')[1]}
             onBack={() => setActiveSection('sales-quote-approval')}
+            showManagerApprovalButton={false}
+          />
+        )}
+        {activeSection === 'sales-bill-approval' && (
+          <SalesBillApprovalSection
+            onBack={() => setActiveSection('dashboard')}
+            onViewBill={(billId) => navigate(`/sale-bill-view/${billId}`)}
           />
         )}
         {activeSection === 'finance' && <FinanceSection />}
@@ -2524,7 +2655,7 @@ const Dashboard = () => {
             </div>
           )}
 
-        {(activeSection === 'stock-packinglist') && (
+        {(activeSection === 'stock-packinglist' || activeSection.startsWith('stock-packinglist/entry')) && (
           <div className="admin-page-container">
             {(() => {
               const currentUser = user || {};
@@ -2537,6 +2668,9 @@ const Dashboard = () => {
                   normalizedRole === 'whstaff')
               ) {
                 return <div style={{ padding: 16, color: '#b91c1c' }}>Access denied: Warehouse staff only.</div>;
+              }
+              if (activeSection.startsWith('stock-packinglist/entry')) {
+                return <PackingListEntryPage />;
               }
               return <PackingListSection />;
             })()}
@@ -3032,15 +3166,36 @@ const Dashboard = () => {
 
         {(activeSection === 'customer-create-bill' || activeSection.startsWith('customer-create-bill/')) && (
           <div className="admin-page-container">
-            <CustomerCreateBill onBack={() => {
-              if (activeSection.includes('/')) {
-                setActiveSection('customer');
-                navigate('/customer');
-              } else {
-                setActiveSection('dashboard');
-                navigate('/');
-              }
-            }} />
+            <CustomerCreateBill 
+              initialCustomerId={activeSection.includes('/') ? activeSection.split('/')[1] : null}
+              onBack={() => {
+                if (activeSection.includes('/')) {
+                  setActiveSection('customer');
+                  navigate('/customer');
+                } else {
+                  setActiveSection('dashboard');
+                  navigate('/');
+                }
+              }} 
+            />
+          </div>
+        )}
+
+        {(activeSection === 'customer-edit-bill' || activeSection.startsWith('customer-edit-bill/')) && (
+          <div className="admin-page-container">
+            <CustomerCreateBill
+              editBillId={activeSection.includes('/') ? activeSection.split('/')[1] : null}
+              onBack={() => {
+                if (activeSection.includes('/')) {
+                  const bid = activeSection.split('/')[1];
+                  setActiveSection(`sale-bill-view/${bid}`);
+                  navigate(`/sale-bill-view/${bid}`);
+                } else {
+                  setActiveSection('customer');
+                  navigate('/customer');
+                }
+              }}
+            />
           </div>
         )}
 
@@ -3067,9 +3222,12 @@ const Dashboard = () => {
           !activeSection.startsWith('customer-view/') &&
           !activeSection.startsWith('supplier-create-bill/') &&
           !activeSection.startsWith('customer-create-bill/') &&
+          !activeSection.startsWith('customer-edit-bill/') &&
           !activeSection.startsWith('sales-quote-view/') &&
           !activeSection.startsWith('sales-quote-create/') &&
+          !activeSection.startsWith('sales-quote-edit/') &&
           activeSection !== 'sales-quote-create' &&
+          activeSection !== 'sales-quote-edit' &&
           !activeSection.endsWith('/brand') &&
           !activeSection.endsWith('/Brand') &&
           !activeSection.toLowerCase().endsWith('/category') &&
@@ -3083,8 +3241,10 @@ const Dashboard = () => {
           activeSection !== 'workflow' &&
           !activeSection.startsWith('purchase-approval-details/') &&
           !activeSection.startsWith('stock-transfer-approval-view/') &&
+          !activeSection.startsWith('sales-bill-approval-view/') &&
           !activeSection.startsWith('sales-quote-approval-view/') &&
           !activeSection.startsWith('stocktransferapprovalfinal/') &&
+          !activeSection.startsWith('stock-packinglist/entry') &&
           activeSection !== 'module-1008' && (
             <div className="admin-page-container">
               <GenericSubModuleSection sectionId={activeSection} menuItems={menuItems} />

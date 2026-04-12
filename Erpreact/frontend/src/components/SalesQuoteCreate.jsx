@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Box,
     Paper,
@@ -49,7 +49,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const isTablet = useMediaQuery(theme.breakpoints.down('md'));
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
     // Make the header form comfortable on mobile.
     const fieldLabelSx = {
@@ -172,8 +172,65 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
     const [salesPersons, setSalesPersons] = useState([]);
     const [termsList, setTermsList] = useState([]);
 
+    /** Safe string for TextField / API merge (avoids [object Object] from nested JSON). */
+    const scalarString = (v) => {
+        if (v == null || v === '') return '';
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+        if (typeof v === 'object') {
+            if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+            const inner = typeof v.valueOf === 'function' ? v.valueOf() : null;
+            if (typeof inner === 'string' || typeof inner === 'number' || typeof inner === 'boolean') return String(inner);
+            return '';
+        }
+        return String(v);
+    };
+
+    const pickRowField = (row, ...candidates) => {
+        if (!row || typeof row !== 'object') return null;
+        for (const c of candidates) {
+            const key = Object.keys(row).find(k => k.toLowerCase() === String(c).toLowerCase());
+            if (key != null && row[key] != null && row[key] !== '') return row[key];
+        }
+        return null;
+    };
+
+    const formatMoneyStr = (v) => {
+        if (v == null || v === '') return '0.00';
+        const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/,/g, '').trim());
+        return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+    };
+
     const [feedback, setFeedback] = useState({ open: false, message: '', severity: 'success' });
     const [attemptedSave, setAttemptedSave] = useState(false);
+
+    const itemAutocompleteOptions = useMemo(() => {
+        const map = new Map();
+        const add = (p) => {
+            if (!p) return;
+            const id = p.Id ?? p.id;
+            if (id == null || id === '') return;
+            const key = String(id);
+            if (!map.has(key)) map.set(key, p);
+        };
+        products.forEach(add);
+        itemRows.forEach((r) => add(r.product));
+        return Array.from(map.values());
+    }, [products, itemRows]);
+
+    /** COA lines from the API may reference accounts not in the active list; merge row values into options so Autocomplete can display them. */
+    const categoryAutocompleteOptions = useMemo(() => {
+        const map = new Map();
+        const add = (opt) => {
+            if (!opt) return;
+            const id = opt.Id ?? opt.id ?? opt.Categoryid ?? opt.categoryid;
+            if (id == null || id === '') return;
+            const key = String(id);
+            if (!map.has(key)) map.set(key, opt);
+        };
+        categories.forEach(add);
+        categoryRows.forEach((r) => add(r.category));
+        return Array.from(map.values());
+    }, [categories, categoryRows]);
 
     const requiredErrors = React.useMemo(() => {
         const errors = {};
@@ -223,6 +280,33 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             salesPersonName: spName
         }));
     }, [billData.salesPersonId, salesPersons]);
+
+    useEffect(() => {
+        if (!warehouses?.length) return;
+        setBillData((prev) => {
+            if (String(prev.warehouseId ?? '').trim() !== '') return prev;
+            const norm = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+            const hasMain = (raw) => /\bmain\b/i.test(String(raw ?? ''));
+            let w = warehouses.find((x) => {
+                const raw = x.Name ?? x.name ?? '';
+                return norm(raw).includes('sharjah') && hasMain(raw);
+            });
+            if (!w) {
+                w = warehouses.find((x) => {
+                    const n = norm(x.Name ?? x.name ?? '');
+                    return n.includes('sharjah') && n.includes('main');
+                });
+            }
+            if (!w) return prev;
+            const id = w.Id ?? w.id;
+            if (id == null || id === '') return prev;
+            return {
+                ...prev,
+                warehouseId: String(id),
+                warehouseName: String(w.Name ?? w.name ?? '')
+            };
+        });
+    }, [warehouses]);
 
     const fetchMetadata = async () => {
         try {
@@ -289,104 +373,283 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
         }
     };
 
+    const headerGet = (h, ...names) => {
+        if (!h || typeof h !== 'object') return '';
+        for (const name of names) {
+            const hit = Object.keys(h).find(k => k.toLowerCase() === String(name).toLowerCase());
+            if (hit == null || h[hit] == null || h[hit] === '') continue;
+            const v = h[hit];
+            if (typeof v === 'object' && v !== null && !(v instanceof Date)) continue;
+            const s = String(v).trim();
+            if (s === '' || s === '[object Object]') continue;
+            return v;
+        }
+        return '';
+    };
+
     const fetchQuoteDetails = async (id) => {
         try {
+            // Load VAT + chart-of-accounts into locals so row mapping works (React state from fetchMetadata may not be flushed yet).
+            let vatList = [];
+            try {
+                const vatRes = await fetch(`${API_URL}/api/vat`);
+                if (vatRes.ok) {
+                    const vatJson = await vatRes.json();
+                    vatList = Array.isArray(vatJson) ? vatJson : (vatJson?.data || vatJson?.Data || []);
+                    setVatOptions(vatList);
+                }
+            } catch { /* ignore */ }
+
+            let coaList = [];
+            try {
+                const coaRes = await fetch(`${API_URL}/api/chartofaccounts?query=7&isdelete=0&status=Active`);
+                if (coaRes.ok) {
+                    const coaJson = await coaRes.json();
+                    coaList = coaJson.Data || coaJson.data || [];
+                    if (Array.isArray(coaList)) setCategories(coaList);
+                }
+            } catch { /* ignore */ }
+
             const response = await fetch(`${API_URL}/api/salesquote/details/${id}`);
             const data = await response.json();
-            if (data.success) {
-                const head = data.header;
-                const termsIdRaw = head.Terms ?? head.terms;
-                const fromDbAmountsAre = (dbVal) => {
-                    const v = String(dbVal || '').trim().toLowerCase();
-                    if (v === 'inclusive') return 'Inclusive';
-                    if (v === 'outofscope' || v === 'out of scope') return 'Outofscope';
-                    if (v === 'exclusing' || v === 'exclusive') return 'Exclusive';
-                    // fallback: already UI value
-                    return dbVal || 'Exclusive';
-                };
-
-                setBillData({
-                    customerName: head.Customername || '',
-                    customerEmail: '', // Not in header currently
-                    customerId: head.Customerid || '',
-                    contact: head.Contact || '',
-                    phone: head.Phone || '',
-                    terms: termsIdRaw == null ? '4' : String(termsIdRaw),
-                    salesLocation: head.Sales_location || 'Select Location',
-                    vatNumber: head.Vatnumber || head.CustomerTrn || '',
-                    currencyValue: 1,
-                    currencyId: '1',
-                    billNo: head.Salesquoteno || '',
-                    billDate: dayjs(head.Billdate),
-                    dueDate: dayjs(head.Duedate),
-                    deliveryDate: head.Deliverydate
-                        ? dayjs(head.Deliverydate)
-                        : dayjs(head.Duedate),
-                    showShippingAddress: !!head.Shipping_address,
-                    warehouseId: '', // Need to map
-                    warehouseName: '',
-                    billingAddress: head.Billing_address || '',
-                    shippingAddress: head.Shipping_address || '',
-                    salesPersonId: head.Salespersonname ? String(head.Salespersonname) : '',
-                    salesPersonName: 'Select',
-                    amountsAre: fromDbAmountsAre(head.Amountsare),
-                    remarks: head.Remarks || '',
-                    discountType: (() => {
-                        const raw = String(head.Discounttype ?? head.DiscountType ?? '').trim();
-                        if (raw === '1') return 'Discount Value';
-                        if (raw === '2') return 'Discount Percentage';
-                        if (raw.toLowerCase() === 'discount value') return 'Discount Value';
-                        if (raw.toLowerCase() === 'discount percentage') return 'Discount Percentage';
-                        return '';
-                    })(),
-                    discountValue: head.Discountvalue ?? head.DiscountValue ?? 0,
-                    discountAmount: head.Discountamount ?? head.DiscountAmount ?? 0
-                });
-
-                if (data.items && data.items.length > 0) {
-                    setItemRows(data.items.map(item => ({
-                        id: item.Id,
-                        product: {
-                            Id: item.Itemid,
-                            id: item.Itemid,
-                            Itemname: item.Itemname,
-                            itemname: item.Itemname,
-                            Type: item.Type || 'Item'
-                        },
-                        qty: item.Qty || '',
-                        amount: item.Amount || '0.00',
-                        vat: item.Vat || '',
-                        vatId: '', // Need to map
-                        total: item.Total || '0.00',
-                        description: item.Description || '',
-                        isSerialized: false
-                    })));
-                } else {
-                    setItemRows([]);
-                }
-
-                if (data.categories && data.categories.length > 0) {
-                    setCategoryRows(data.categories.map(cat => ({
-                        id: cat.Id,
-                        category: {
-                            Id: cat.Categoryid,
-                            id: cat.Categoryid,
-                            Categoryid: cat.Categoryid,
-                            categoryid: cat.Categoryid,
-                            Categoryname: cat.Categoryname,
-                            categoryname: cat.Categoryname
-                        },
-                        description: '',
-                        amount: cat.Amount || '0.00',
-                        tax: cat.Vat || '',
-                        taxId: '',
-                        total: cat.Total || '0.00'
-                    })));
-                } else {
-                    setCategoryRows([]);
-                }
-            } else {
+            if (!data.success) {
                 Swal.fire('Error', data.message || 'Failed to fetch quote details', 'error');
+                return;
+            }
+
+            const head = data.header || {};
+            const itemsRaw = data.List1 ?? data.list1 ?? data.items ?? [];
+            const catsRaw = data.List3 ?? data.list3 ?? data.categories ?? [];
+
+            const normRate = (x) => String(x ?? '').replace(/\s+/g, ' ').trim();
+            const normalizeVatId = (x) => String(x ?? '').trim();
+            const resolveVat = (vatIdStr, vatRateStr) => {
+                const idStr = normalizeVatId(vatIdStr);
+                const rateStr = normRate(vatRateStr);
+                let opt = vatList.find((v) => normalizeVatId(v.Id ?? v.id) === idStr);
+                if (!opt && idStr !== '') {
+                    const n = Number(idStr);
+                    if (Number.isFinite(n)) {
+                        opt = vatList.find((v) => Number(v.Id ?? v.id) === n);
+                    }
+                }
+                // Same Vatvalue (e.g. "5") can map to multiple VAT rows (SR vs RC). Never guess by rate if we have a DB Vatid.
+                if (!opt && idStr === '' && rateStr !== '') {
+                    const matches = vatList.filter((v) => {
+                        const rv = normRate(v.Vatvalue ?? v.vatvalue);
+                        return rv === rateStr || (Number(rv) === Number(rateStr) && rateStr !== '');
+                    });
+                    if (matches.length === 1) {
+                        opt = matches[0];
+                    } else if (matches.length > 1) {
+                        opt = [...matches].sort((a, b) => {
+                            const ia = Number(a.Id ?? a.id);
+                            const ib = Number(b.Id ?? b.id);
+                            if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
+                            return String(a.Vatname ?? a.vatname ?? '').localeCompare(String(b.Vatname ?? b.vatname ?? ''));
+                        })[0];
+                    }
+                }
+                const name = opt ? String(opt.Vatname ?? opt.vatname ?? '') : '';
+                const vid = idStr || (opt ? String(opt.Id ?? opt.id ?? '') : '');
+                return { vatName: name, vatId: vid };
+            };
+
+            const termsIdRaw = headerGet(head, 'Terms', 'terms');
+            const fromDbAmountsAre = (dbVal) => {
+                const v = String(dbVal || '').trim().toLowerCase();
+                if (v === 'inclusive') return 'Inclusive';
+                if (v === 'outofscope' || v === 'out of scope') return 'Outofscope';
+                if (v === 'exclusing' || v === 'exclusive') return 'Exclusive';
+                return dbVal || 'Exclusive';
+            };
+
+            const customerIdStr = String(headerGet(head, 'Customerid', 'customerid') ?? '').trim();
+            const companyName = String(headerGet(head, 'Companyname', 'companyname', 'Customername', 'customername') ?? '').trim();
+            const currencyRateRaw = headerGet(head, 'Currency_rate', 'currency_rate');
+            const currencyIdRaw = headerGet(head, 'Currency', 'currency');
+            const cr = Number.parseFloat(String(currencyRateRaw ?? '1').replace(/,/g, ''));
+            const warehouseIdStr = String(headerGet(head, 'Warehouseid1', 'warehouseid1', 'Warehouseid', 'warehouseid') ?? '').trim();
+
+            setBillData({
+                customerName: companyName,
+                customerEmail: scalarString(headerGet(head, 'Email', 'email')),
+                customerId: customerIdStr,
+                contact: scalarString(headerGet(head, 'Contact', 'contact')),
+                phone: scalarString(headerGet(head, 'Phoneno', 'phoneno', 'Phone', 'phone')),
+                terms: termsIdRaw == null || termsIdRaw === '' ? '4' : String(termsIdRaw),
+                salesLocation: String(headerGet(head, 'Sales_location', 'sales_location') || 'Select Location'),
+                vatNumber: String(headerGet(head, 'Vatnumber', 'vatnumber', 'CustomerTrn', 'customerTrn') ?? ''),
+                currencyValue: Number.isFinite(cr) && cr > 0 ? cr : 1,
+                currencyId: currencyIdRaw != null && currencyIdRaw !== '' ? String(currencyIdRaw) : '1',
+                billNo: String(headerGet(head, 'Salesquoteno', 'salesquoteno') ?? 'Draft'),
+                billDate: dayjs(headerGet(head, 'Billdate', 'billdate') || undefined),
+                dueDate: dayjs(headerGet(head, 'Duedate', 'duedate') || undefined),
+                deliveryDate: headerGet(head, 'Deliverydate', 'deliverydate')
+                    ? dayjs(headerGet(head, 'Deliverydate', 'deliverydate'))
+                    : dayjs(headerGet(head, 'Duedate', 'duedate') || undefined),
+                showShippingAddress: !!String(headerGet(head, 'Shipping_address', 'shipping_address') ?? '').trim(),
+                warehouseId: warehouseIdStr,
+                warehouseName: '',
+                billingAddress: String(headerGet(head, 'Billing_address', 'billing_address') ?? ''),
+                shippingAddress: String(headerGet(head, 'Shipping_address', 'shipping_address') ?? ''),
+                salesPersonId: String(headerGet(head, 'Salespersonname', 'salespersonname') ?? ''),
+                salesPersonName: 'Select',
+                amountsAre: fromDbAmountsAre(headerGet(head, 'Amountsare', 'amountsare')),
+                remarks: String(headerGet(head, 'Remarks', 'remarks') ?? '').replace(/<br\s*\/?>/gi, '\n'),
+                discountType: (() => {
+                    const raw = String(headerGet(head, 'Discounttype', 'discounttype') ?? '').trim();
+                    if (raw === '1') return 'Discount Value';
+                    if (raw === '2') return 'Discount Percentage';
+                    if (raw.toLowerCase() === 'discount value') return 'Discount Value';
+                    if (raw.toLowerCase() === 'discount percentage') return 'Discount Percentage';
+                    return '';
+                })(),
+                discountValue: headerGet(head, 'Discountvalue', 'discountvalue') || 0,
+                discountAmount: headerGet(head, 'Discountamount', 'discountamount') || 0
+            });
+
+            if (customerIdStr) {
+                try {
+                    const cr2 = await fetch(`${API_URL}/api/customer/${encodeURIComponent(customerIdStr)}`);
+                    const jr = await cr2.json().catch(() => ({}));
+                    const c = jr?.data || jr?.Data;
+                    if (cr2.ok && c) {
+                        const displayName =
+                            c.Customerdisplayname || c.customerdisplayname
+                            || c.Companyname || c.companyname
+                            || c.Customername || c.customername
+                            || companyName;
+                        setCustomers([{
+                            Id: c.Id ?? c.id,
+                            id: c.Id ?? c.id,
+                            Customername: displayName,
+                            customername: displayName,
+                            Customerdisplayname: c.Customerdisplayname || c.customerdisplayname,
+                            customerdisplayname: c.Customerdisplayname || c.customerdisplayname
+                        }]);
+                        setBillData(prev => ({
+                            ...prev,
+                            customerName: displayName || prev.customerName,
+                            customerEmail: (c.Email ?? c.email ?? prev.customerEmail) || ''
+                        }));
+                    }
+                } catch { /* ignore */ }
+            }
+
+            const defaultItemRow = () => ({
+                id: Date.now() + 1,
+                product: null,
+                qty: '',
+                amount: '0.00',
+                vat: '',
+                vatId: '',
+                total: '0.00',
+                description: '',
+                isSerialized: false
+            });
+            const defaultCatRow = () => ({
+                id: Date.now(),
+                category: null,
+                description: '',
+                amount: '0.00',
+                tax: '',
+                taxId: '',
+                total: '0.00'
+            });
+
+            if (Array.isArray(itemsRaw) && itemsRaw.length > 0) {
+                setItemRows(itemsRaw.map((item, idx) => {
+                    const vatIdDb = pickRowField(item, 'Vat', 'vat');
+                    const vatRateDb = pickRowField(item, 'Vat_id', 'vat_id');
+                    const { vatName, vatId } = resolveVat(vatIdDb, vatRateDb);
+                    const model = pickRowField(item, 'Modelno', 'modelno') ?? '';
+                    const shortDesc = pickRowField(item, 'Shortdescription', 'shortdescription') ?? '';
+                    const descParts = [model ? `Modelno: ${model}` : '', shortDesc].filter(Boolean);
+                    const itemId = pickRowField(item, 'Itemid', 'itemid');
+                    const itemName = pickRowField(item, 'Itemname', 'itemname');
+                    const itemType = pickRowField(item, 'Type', 'type') ?? 'Item';
+                    const qtyRaw = pickRowField(item, 'Qty', 'qty');
+                    const amtRaw = pickRowField(item, 'Amount', 'amount');
+                    const totRaw = pickRowField(item, 'Total', 'total');
+                    return {
+                        id: item.Id ?? item.id ?? `it-${idx}-${Date.now()}`,
+                        product: itemId != null && itemId !== ''
+                            ? {
+                                Id: itemId,
+                                id: itemId,
+                                Itemname: itemName ?? '',
+                                itemname: itemName ?? '',
+                                Type: itemType,
+                                type: itemType
+                            }
+                            : null,
+                        qty: qtyRaw != null ? String(qtyRaw) : '',
+                        amount: formatMoneyStr(amtRaw),
+                        vat: vatName,
+                        vatId,
+                        total: formatMoneyStr(totRaw),
+                        description: descParts.join('\n') || '',
+                        isSerialized: false
+                    };
+                }));
+            } else {
+                setItemRows([defaultItemRow()]);
+            }
+
+            if (Array.isArray(catsRaw) && catsRaw.length > 0) {
+                setCategoryRows(catsRaw.map((cat, idx) => {
+                    const catIdRaw = pickRowField(
+                        cat,
+                        'Categoryid',
+                        'categoryid',
+                        'Chartofaccountsid',
+                        'chartofaccountsid',
+                        'ChartOfAccountsId',
+                        'CategoryId'
+                    );
+                    const catId = catIdRaw != null ? String(catIdRaw).trim() : '';
+                    let coa = catId
+                        ? coaList.find((x) => String(x.Id ?? x.id).trim() === catId)
+                        : null;
+                    const nameFromApi = scalarString(pickRowField(cat, 'Name', 'name', 'Categoryname', 'categoryname'));
+                    const descFromApi = scalarString(pickRowField(cat, 'Description', 'description'));
+                    if (!coa && nameFromApi && coaList.length > 0) {
+                        const n = nameFromApi.toLowerCase();
+                        coa = coaList.find((x) => {
+                            const nm = String(x.Name ?? x.name ?? x.Categoryname ?? x.categoryname ?? '').trim().toLowerCase();
+                            return nm === n;
+                        });
+                    }
+                    const labelFallback = nameFromApi || descFromApi || '';
+                    const vatIdDb = pickRowField(cat, 'Vatid', 'vatid');
+                    const vatRateDb = pickRowField(cat, 'Vatvalue', 'vatvalue');
+                    const { vatName, vatId: taxIdResolved } = resolveVat(vatIdDb, vatRateDb);
+                    const catObj = coa
+                        || (catId
+                            ? {
+                                Id: catId,
+                                id: catId,
+                                Name: labelFallback || `Account ${catId}`,
+                                name: labelFallback || `Account ${catId}`,
+                                Categoryname: labelFallback || `Account ${catId}`,
+                                categoryname: labelFallback || `Account ${catId}`
+                            }
+                            : null);
+                    const amtRaw = pickRowField(cat, 'Amount', 'amount');
+                    const totRaw = pickRowField(cat, 'Total', 'total');
+                    return {
+                        id: cat.Id ?? cat.id ?? `cat-${idx}-${Date.now()}`,
+                        category: catObj,
+                        description: descFromApi,
+                        amount: formatMoneyStr(amtRaw),
+                        tax: vatName,
+                        taxId: taxIdResolved,
+                        total: formatMoneyStr(totRaw)
+                    };
+                }));
+            } else {
+                setCategoryRows([defaultCatRow()]);
             }
         } catch (error) {
             console.error('Error fetching quote:', error);
@@ -500,9 +763,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
             if (!res.ok || !c) return;
 
             // Fill from Tbl_Customer columns
-            const email = (c.Email ?? c.email ?? '').toString();
-            const contact = (c.Phonenumber ?? c.phonenumber ?? '').toString();
-            const mobile = (c.Mobilenumber ?? c.mobilenumber ?? '').toString();
+            const email = scalarString(c.Email ?? c.email);
+            const contact = scalarString(c.Phonenumber ?? c.phonenumber);
+            const mobile = scalarString(c.Mobilenumber ?? c.mobilenumber);
             const vat = (c.Licenseno ?? c.licenseno ?? c.Vatnumber ?? c.vatnumber ?? '').toString();
             const termsIdRaw = c.Terms ?? c.terms;
             const termsId = termsIdRaw == null ? null : Number(termsIdRaw);
@@ -943,9 +1206,21 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
 
             // VAT breakdown rows (legacy Sp_Purchasevatdetails concept)
             const tableDatavat = (pricingSummary?.vatLines || []).map(v => {
-                const vatOpt =
-                    vatOptions.find(x => Number(x.Vatvalue || x.vatvalue) === Number(v.rate))
-                    || vatOptions.find(x => Number(x.Vatvalue || x.vatvalue) === Number(parseFloat(v.rate)));
+                const r = Number(v.rate);
+                const matches = vatOptions.filter((x) => {
+                    const rv = Number.parseFloat(String(x.Vatvalue ?? x.vatvalue ?? '').replace(/,/g, '').trim());
+                    return Number.isFinite(rv) && Number.isFinite(r) && rv === r;
+                });
+                const vatOpt = matches.length === 1
+                    ? matches[0]
+                    : matches.length > 1
+                        ? [...matches].sort((a, b) => {
+                            const ia = Number(a.Id ?? a.id);
+                            const ib = Number(b.Id ?? b.id);
+                            if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
+                            return String(a.Vatname ?? a.vatname ?? '').localeCompare(String(b.Vatname ?? b.vatname ?? ''));
+                        })[0]
+                        : null;
                 return {
                     id: String(vatOpt?.Id ?? vatOpt?.id ?? ''),
                     vatprice: String(v.base.toFixed(2)),
@@ -1285,7 +1560,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                 <TableCell>{index + 1}</TableCell>
                                                 <TableCell sx={{ p: 0.5 }}>
                                                     <Autocomplete
-                                                        options={categories}
+                                                        options={categoryAutocompleteOptions}
                                                         loading={loadingCategories}
                                                         value={row.category}
                                                         getOptionLabel={(option) => categoryOptionLabel(option)}
@@ -1296,9 +1571,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                         }}
                                                         isOptionEqualToValue={(option, value) => {
                                                             if (!option || !value) return false;
-                                                            const o = option.Id ?? option.id;
+                                                            const o = option.Id ?? option.id ?? option.Categoryid ?? option.categoryid;
                                                             const v = value.Id ?? value.id ?? value.Categoryid ?? value.categoryid;
-                                                            return o != null && v != null && String(o) === String(v);
+                                                            return o != null && v != null && String(o).trim() === String(v).trim();
                                                         }}
                                                         onOpen={() => { if (categories.length === 0) fetchCategories(); }}
                                                         onChange={(e, v) => handleCategoryRowChange(index, 'category', v)}
@@ -1333,7 +1608,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                         <Stack spacing={2}>
                                             <Typography variant="caption" fontWeight={800} color="primary">CATEGORY {index + 1}</Typography>
                                             <Autocomplete
-                                                options={categories}
+                                                options={categoryAutocompleteOptions}
                                                 loading={loadingCategories}
                                                 value={row.category}
                                                 getOptionLabel={(option) => categoryOptionLabel(option)}
@@ -1344,9 +1619,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                 }}
                                                 isOptionEqualToValue={(option, value) => {
                                                     if (!option || !value) return false;
-                                                    const o = option.Id ?? option.id;
+                                                    const o = option.Id ?? option.id ?? option.Categoryid ?? option.categoryid;
                                                     const v = value.Id ?? value.id ?? value.Categoryid ?? value.categoryid;
-                                                    return o != null && v != null && String(o) === String(v);
+                                                    return o != null && v != null && String(o).trim() === String(v).trim();
                                                 }}
                                                 onOpen={() => { if (categories.length === 0) fetchCategories(); }}
                                                 onChange={(e, v) => handleCategoryRowChange(index, 'category', v)}
@@ -1398,7 +1673,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                 <TableCell>{index + 1}</TableCell>
                                                 <TableCell sx={{ p: 0.5 }}>
                                                     <Autocomplete
-                                                        options={products}
+                                                        value={row.product}
+                                                        options={itemAutocompleteOptions}
+                                                        loading={loadingProducts}
                                                         getOptionLabel={(option) => {
                                                             const name = option.Itemname || option.itemname || option.Productname || option.productname || '';
                                                             const type = option.Type || option.type || '';
@@ -1442,7 +1719,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                                 </li>
                                                             );
                                                         }}
-                                                        isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
+                                                        isOptionEqualToValue={(option, value) => String(option?.Id ?? option?.id) === String(value?.Id ?? value?.id)}
                                                         onInputChange={(e, v) => fetchProducts(v)}
                                                         onChange={(e, v) => handleItemRowChange(index, 'product', v)}
                                                         renderInput={(params) => (
@@ -1500,7 +1777,9 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                         <Stack spacing={2}>
                                             <Typography variant="caption" fontWeight={800} color="secondary">ITEM {index + 1}</Typography>
                                             <Autocomplete
-                                                options={products}
+                                                value={row.product}
+                                                options={itemAutocompleteOptions}
+                                                loading={loadingProducts}
                                                 getOptionLabel={(option) => {
                                                     const name = option.Itemname || option.itemname || option.Productname || option.productname || '';
                                                     const type = option.Type || option.type || '';
@@ -1544,7 +1823,7 @@ const SalesQuoteCreate = ({ onBack, quoteId, mode = 'create' }) => {
                                                         </li>
                                                     );
                                                 }}
-                                                isOptionEqualToValue={(option, value) => (option.Id || option.id) === (value.Id || value.id)}
+                                                isOptionEqualToValue={(option, value) => String(option?.Id ?? option?.id) === String(value?.Id ?? value?.id)}
                                                 onInputChange={(e, v) => fetchProducts(v)}
                                                 onChange={(e, v) => handleItemRowChange(index, 'product', v)}
                                                 renderInput={(params) => (

@@ -63,7 +63,7 @@ import dayjs from 'dayjs';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
 const StockAdjustmentSection = () => {
     const theme = useTheme();

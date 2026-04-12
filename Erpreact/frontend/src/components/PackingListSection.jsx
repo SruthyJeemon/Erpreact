@@ -1,6 +1,8 @@
 import React from 'react';
-import { Box, Tabs, Tab, Paper, Typography, Stack, Button, Chip, TextField, InputAdornment, Grid, Avatar } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { Box, Tabs, Tab, Paper, Typography, Stack, Button, Chip, TextField, InputAdornment, Grid, Avatar, CircularProgress } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { alpha } from '@mui/material/styles';
 import SearchIcon from '@mui/icons-material/Search';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -17,7 +19,6 @@ const TableBlock = ({ title, rows, columns }) => {
 			<Typography variant="subtitle1" sx={{ mb: 1.5, fontWeight: 700, color: '#0f172a' }}>{title}</Typography>
 			<div style={{ width: '100%' }}>
 				<DataGrid
-					autoHeight
 					rows={rows}
 					columns={columns}
 					pageSizeOptions={[10, 25, 50]}
@@ -31,6 +32,8 @@ const TableBlock = ({ title, rows, columns }) => {
 						pagination: { paginationModel: { pageSize: 10, page: 0 } }
 					}}
 					sx={{
+						height: 480,
+						width: '100%',
 						border: 'none',
 						'& .MuiDataGrid-columnHeaders': {
 							backgroundColor: '#2C3E50',
@@ -89,15 +92,80 @@ const defaultColumns = [
 	}
 ];
 
-const sample = (status) => Array.from({ length: 12 }).map((_, i) => ({
-	id: `${status}-${i + 1}`,
-	ref: `PK-${String(1000 + i)}`,
-	customer: ['Acme Co.', 'Globex', 'Initech'][i % 3],
-	items: (i % 5) + 1,
-	qty: (i % 7) + 2,
-	createdAt: '2026-04-04',
-	status
-}));
+/** In dev, same-origin `/api` uses Vite proxy (vite.config.js → localhost:5023). Production uses VITE_API_URL. */
+function packingListApiBase() {
+	if (import.meta.env.DEV) return '';
+	return (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+}
+
+async function fetchPackingListJson(path, queryString) {
+	const base = packingListApiBase();
+	const url = `${base}/api/PackingList/${path}?${queryString}`;
+	const res = await fetch(url);
+	const text = await res.text();
+	let data = {};
+	if (text) {
+		try {
+			data = JSON.parse(text);
+		} catch {
+			const snip = text.replace(/\s+/g, ' ').slice(0, 160);
+			throw new Error(`Not JSON (${res.status}): ${snip}`);
+		}
+	} else if (!res.ok) {
+		throw new Error(`Empty response (${res.status} ${res.statusText}). Is the API running on port 5023?`);
+	}
+	if (!res.ok) {
+		const msg = data.message ?? data.title ?? data.error;
+		throw new Error(typeof msg === 'string' && msg ? msg : `${res.status} ${res.statusText}`);
+	}
+	return data;
+}
+
+function formatCreatedAt(v) {
+	if (v == null || v === '') return '';
+	const s = String(v).trim();
+	const d = dayjs(s);
+	return d.isValid() ? d.format('YYYY-MM-DD') : s;
+}
+
+function mapPendingRow(x) {
+	const id = String(x.Id ?? x.id ?? '').trim() || `p-${Math.random()}`;
+	return {
+		id,
+		ref: String(x.Billno ?? x.billno ?? x.Salesquoteno ?? x.salesquoteno ?? '').trim(),
+		customer: String(x.Customername ?? x.customername ?? '').trim(),
+		items: Number(x.ItemsCount ?? x.itemsCount ?? 0),
+		qty: Number(x.TotalQty ?? x.totalQty ?? 0),
+		createdAt: formatCreatedAt(x.Billdate ?? x.billdate),
+		status: 'Pending'
+	};
+}
+
+function mapProgressRow(x) {
+	const id = String(x.Id ?? x.id ?? '').trim() || `g-${Math.random()}`;
+	return {
+		id,
+		ref: String(x.Salesquoteno ?? x.salesquoteno ?? x.Billno ?? x.billno ?? '').trim(),
+		customer: String(x.Customerdisplayname ?? x.customerdisplayname ?? '').trim(),
+		items: Number(x.ItemsCount ?? x.itemsCount ?? 0),
+		qty: Number(x.TotalQty ?? x.totalQty ?? 0),
+		createdAt: formatCreatedAt(x.Enterdate ?? x.enterdate),
+		status: 'In Progress'
+	};
+}
+
+function mapApprovedRow(x) {
+	const id = String(x.Id ?? x.id ?? '').trim() || `a-${Math.random()}`;
+	return {
+		id,
+		ref: String(x.Salesquoteno ?? x.salesquoteno ?? x.Billno ?? x.billno ?? '').trim(),
+		customer: String(x.Customerdisplayname ?? x.customerdisplayname ?? '').trim(),
+		items: Number(x.ItemsCount ?? x.itemsCount ?? 0),
+		qty: Number(x.TotalQty ?? x.totalQty ?? 0),
+		createdAt: formatCreatedAt(x.Enterdate ?? x.enterdate),
+		status: 'Approved'
+	};
+}
 
 const PackingListSection = () => {
 	const [tab, setTab] = React.useState(0);
@@ -106,19 +174,114 @@ const PackingListSection = () => {
 	const [searchText, setSearchText] = React.useState('');
 	const [rowsPerPage, setRowsPerPage] = React.useState(10);
 	const [currentPage, setCurrentPage] = React.useState(1);
+	const [pendingRows, setPendingRows] = React.useState([]);
+	const [progressRows, setProgressRows] = React.useState([]);
+	const [approvedRows, setApprovedRows] = React.useState([]);
+	const [pendingTotal, setPendingTotal] = React.useState(0);
+	const [approvedTotal, setApprovedTotal] = React.useState(0);
+	const [loadError, setLoadError] = React.useState('');
+	/** Archived list is heavy (N+1 SQL per row on server); load after pending/in-progress so Back from entry is fast */
+	const [archivedLoading, setArchivedLoading] = React.useState(false);
+	const navigate = useNavigate();
 
-	const pendingRows = React.useMemo(() => sample('Pending'), []);
-	const progressRows = React.useMemo(() => sample('In Progress'), []);
-	const approvedRows = React.useMemo(() => sample('Approved'), []);
+	const handleOpenEntry = React.useCallback(
+		(row) => {
+			const q = new URLSearchParams({
+				ref: row.ref || '',
+				customer: row.customer || ''
+			});
+			navigate(`/stock-packinglist/entry/${encodeURIComponent(String(row.id))}?${q.toString()}`);
+		},
+		[navigate]
+	);
+
+	const listColumns = React.useMemo(
+		() => [
+			...defaultColumns,
+			{
+				field: 'actions',
+				headerName: 'VIEW',
+				width: 100,
+				sortable: false,
+				filterable: false,
+				disableColumnMenu: true,
+				renderCell: (params) => (
+					<Button
+						size="small"
+						variant="outlined"
+						startIcon={<VisibilityIcon fontSize="small" />}
+						onClick={() => handleOpenEntry(params.row)}
+						sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px', py: 0.25, minWidth: 0 }}
+					>
+						View
+					</Button>
+				)
+			}
+		],
+		[handleOpenEntry]
+	);
+
+	React.useEffect(() => {
+		let cancelled = false;
+		const user = JSON.parse(localStorage.getItem('user') || '{}');
+		const userid = String(user?.Userid || user?.userid || user?.id || user?.Id || '').trim();
+		if (!userid) {
+			setLoadError('Not logged in');
+			return () => {
+				cancelled = true;
+			};
+		}
+		const q = `userid=${encodeURIComponent(userid)}`;
+		setLoadError('');
+		setArchivedLoading(false);
+		setApprovedRows([]);
+		setApprovedTotal(0);
+
+		Promise.all([fetchPackingListJson('pending', q), fetchPackingListJson('in-progress', q)])
+			.then(([p, pr]) => {
+				if (cancelled) return;
+				const pList = p.list1 ?? p.List1 ?? [];
+				const prList = pr.list1 ?? pr.List1 ?? [];
+				setPendingRows(Array.isArray(pList) ? pList.map(mapPendingRow) : []);
+				setProgressRows(Array.isArray(prList) ? prList.map(mapProgressRow) : []);
+				setPendingTotal(typeof p.totalCount === 'number' ? p.totalCount : pList.length);
+
+				setArchivedLoading(true);
+				fetchPackingListJson('archived', q)
+					.then((a) => {
+						if (cancelled) return;
+						const aList = a.list1 ?? a.List1 ?? [];
+						setApprovedRows(Array.isArray(aList) ? aList.map(mapApprovedRow) : []);
+						setApprovedTotal(typeof a.totalCount === 'number' ? a.totalCount : aList.length);
+					})
+					.catch(() => {
+						if (cancelled) return;
+						setApprovedRows([]);
+						setApprovedTotal(0);
+					})
+					.finally(() => {
+						if (!cancelled) setArchivedLoading(false);
+					});
+			})
+			.catch((e) => {
+				if (!cancelled) setLoadError(e?.message || 'Failed to load packing list');
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	const allTabs = [pendingRows, progressRows, approvedRows];
 
 	const filteredRows = React.useMemo(() => {
 		const rows = allTabs[tab] || [];
-		return rows.filter(r => {
+		return rows.filter((r) => {
 			const refOk = (r.ref || '').toLowerCase().includes(searchText.toLowerCase());
+			// Pending (0) and In Progress (1): show all rows — no From/To date filter
+			if (tab === 0 || tab === 1) return refOk;
 			const d = dayjs(r.createdAt);
-			const dateOk = (!fromDate || d.isAfter(fromDate.subtract(1, 'day'))) && (!toDate || d.isBefore(toDate.add(1, 'day')));
+			const dateOk =
+				(!fromDate || d.isAfter(fromDate.subtract(1, 'day'))) && (!toDate || d.isBefore(toDate.add(1, 'day')));
 			return refOk && dateOk;
 		});
 	}, [tab, allTabs, searchText, fromDate, toDate]);
@@ -153,7 +316,7 @@ const PackingListSection = () => {
 						</Avatar>
 						<Box>
 							<Typography variant="caption" fontWeight={800} color="#64748b" sx={{ textTransform: 'uppercase' }}>Pending</Typography>
-							<Typography variant="h5" fontWeight={950}>{pendingRows.length}</Typography>
+							<Typography variant="h5" fontWeight={950}>{pendingTotal}</Typography>
 						</Box>
 					</Paper>
 				</Grid>
@@ -164,7 +327,14 @@ const PackingListSection = () => {
 						</Avatar>
 						<Box>
 							<Typography variant="caption" fontWeight={800} color="#64748b" sx={{ textTransform: 'uppercase' }}>Approved</Typography>
-							<Typography variant="h5" fontWeight={950}>{approvedRows.length}</Typography>
+							<Stack direction="row" alignItems="center" spacing={1}>
+								{archivedLoading ? (
+									<CircularProgress size={22} thickness={5} sx={{ color: '#10b981' }} />
+								) : null}
+								<Typography variant="h5" fontWeight={950}>
+									{archivedLoading ? '…' : approvedTotal}
+								</Typography>
+							</Stack>
 						</Box>
 					</Paper>
 				</Grid>
@@ -189,28 +359,44 @@ const PackingListSection = () => {
 				</Tabs>
 			</Paper>
 
-			{/* Filters row */}
+			{loadError ? (
+				<Typography variant="body2" color="error" sx={{ px: 1 }}>{loadError}</Typography>
+			) : null}
+
+			{/* Filters: From/To dates only on Approved; Pending & In Progress show all rows + reference search */}
 			<Paper sx={{ p: 2, borderRadius: 2, border: '1px solid #e2e8f0', boxShadow: 'none' }}>
 				<Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between">
-					<Typography variant="subtitle1" fontWeight={900}>History</Typography>
+					{tab === 2 ? (
+						<Typography variant="subtitle1" fontWeight={900}>
+							History
+						</Typography>
+					) : (
+						<Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ alignSelf: { md: 'center' } }}>
+							{tab === 0 ? 'All pending records' : 'All in-progress records'} — filter by reference below
+						</Typography>
+					)}
 					<Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
-						<LocalizationProvider dateAdapter={AdapterDayjs}>
-							<Stack direction="row" spacing={1} alignItems="center">
-								<DatePicker
-									label="From"
-									value={fromDate}
-									onChange={(v) => setFromDate(v)}
-									slotProps={{ textField: { size: 'small', sx: { width: 150 } } }}
-								/>
-								<Typography variant="body2" color="text.secondary">to</Typography>
-								<DatePicker
-									label="To"
-									value={toDate}
-									onChange={(v) => setToDate(v)}
-									slotProps={{ textField: { size: 'small', sx: { width: 150 } } }}
-								/>
-							</Stack>
-						</LocalizationProvider>
+						{tab === 2 ? (
+							<LocalizationProvider dateAdapter={AdapterDayjs}>
+								<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+									<DatePicker
+										label="From"
+										value={fromDate}
+										onChange={(v) => setFromDate(v)}
+										slotProps={{ textField: { size: 'small', sx: { width: 150 } } }}
+									/>
+									<Typography variant="body2" color="text.secondary">
+										to
+									</Typography>
+									<DatePicker
+										label="To"
+										value={toDate}
+										onChange={(v) => setToDate(v)}
+										slotProps={{ textField: { size: 'small', sx: { width: 150 } } }}
+									/>
+								</Stack>
+							</LocalizationProvider>
+						) : null}
 						<TextField
 							placeholder="Search reference..."
 							size="small"
@@ -227,9 +413,19 @@ const PackingListSection = () => {
 			</Paper>
 
 			{/* Data table */}
-			{tab === 0 && <TableBlock title="Pending" rows={pageRows} columns={defaultColumns} />}
-			{tab === 1 && <TableBlock title="In Progress" rows={pageRows} columns={defaultColumns} />}
-			{tab === 2 && <TableBlock title="Approved" rows={pageRows} columns={defaultColumns} />}
+			{tab === 0 && <TableBlock title="Pending" rows={pageRows} columns={listColumns} />}
+			{tab === 1 && <TableBlock title="In Progress" rows={pageRows} columns={listColumns} />}
+			{tab === 2 && archivedLoading && approvedRows.length === 0 ? (
+				<Paper sx={{ p: 3, borderRadius: 2, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 2 }}>
+					<CircularProgress size={28} />
+					<Typography variant="body2" color="text.secondary">
+						Loading approved list… this can take a moment for large history.
+					</Typography>
+				</Paper>
+			) : null}
+			{tab === 2 && !(archivedLoading && approvedRows.length === 0) ? (
+				<TableBlock title="Approved" rows={pageRows} columns={listColumns} />
+			) : null}
 
 			<DataTableFooter
 				totalItems={filteredRows.length}

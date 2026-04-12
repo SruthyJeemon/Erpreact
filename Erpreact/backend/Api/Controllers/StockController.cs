@@ -978,10 +978,10 @@ namespace Api.Controllers
                             transaction.Commit();
                             message = "Deleted Successfully";
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
                             transaction.Rollback();
-                            throw ex;
+                            throw;
                         }
                     }
                 }
@@ -1130,10 +1130,10 @@ namespace Api.Controllers
                             transaction.Commit();
                             message = "Updated Successfully";
                         }
-                        catch (Exception ex)
+                        catch (Exception)
                         {
                             transaction.Rollback();
-                            throw ex;
+                            throw;
                         }
                     }
                 }
@@ -1367,9 +1367,9 @@ namespace Api.Controllers
                             transaction.Commit();
                             return Ok(new { success = true, msg = "Decision processed successfully." });
                         }
-                        catch (Exception ex) {
+                        catch (Exception) {
                             transaction.Rollback();
-                            throw ex;
+                            throw;
                         }
                     }
                 }
@@ -1544,6 +1544,73 @@ namespace Api.Controllers
             {
                 return StatusCode(500, new { success = false, msg = "Server Error: " + ex.Message });
             }
+        }
+
+        /// <summary>Legacy MVC /Stock/GetDriverOrHelper — drivers or helpers from Tbl_Driverdetails.</summary>
+        [HttpGet("GetDriverOrHelper")]
+        public IActionResult GetDriverOrHelper([FromQuery] string? type)
+        {
+            var list = new List<object>();
+            if (string.IsNullOrWhiteSpace(type))
+                return Ok(list);
+
+            try
+            {
+                var cs = _configuration.GetConnectionString("DefaultConnection");
+                using var con = new SqlConnection(cs);
+                con.Open();
+                const string query = "SELECT Id, Drivername, Licenseno, Mobileno FROM Tbl_Driverdetails WHERE Isdelete = 0 AND Type = @Type";
+                using var cmd = new SqlCommand(query, con);
+                cmd.Parameters.AddWithValue("@Type", type.Trim());
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    list.Add(new
+                    {
+                        Id = reader["Id"]?.ToString() ?? "",
+                        Name = reader["Drivername"]?.ToString() ?? "",
+                        License = reader["Licenseno"]?.ToString() ?? "",
+                        Mobile = reader["Mobileno"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+
+            return Ok(list);
+        }
+
+        /// <summary>Legacy MVC /Stock/GetVehicles — vehicles from Tbl_Vehicledetails.</summary>
+        [HttpGet("GetVehicles")]
+        public IActionResult GetVehicles()
+        {
+            var vehicles = new List<object>();
+            try
+            {
+                var cs = _configuration.GetConnectionString("DefaultConnection");
+                using var con = new SqlConnection(cs);
+                con.Open();
+                const string query = "SELECT Id, Vehiclename, Vehicleno FROM Tbl_Vehicledetails WHERE Isdelete = 0";
+                using var cmd = new SqlCommand(query, con);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    vehicles.Add(new
+                    {
+                        Id = reader["Id"]?.ToString() ?? "",
+                        Name = reader["Vehiclename"]?.ToString() ?? "",
+                        No = reader["Vehicleno"]?.ToString() ?? ""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+
+            return Ok(vehicles);
         }
 
         public class Stockadjustment

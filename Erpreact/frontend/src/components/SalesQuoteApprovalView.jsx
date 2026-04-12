@@ -44,8 +44,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     import.meta.url
 ).toString();
 
+// Read API fields whether JSON is PascalCase or camelCase
+const pickField = (obj, ...names) => {
+    if (!obj) return '';
+    for (const name of names) {
+        const v = obj[name];
+        if (v != null && String(v).trim() !== '') return v;
+    }
+    return '';
+};
+
 // --- Sales Quote Template Component ---
-const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) => {
+export const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template", invoiceNoOverride }) => {
     if (!quote) return null;
 
     const fmtDate = (d) => {
@@ -74,16 +84,39 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
     const dueDateText = fmtDate(quote.Duedate || quote.duedate);
     const paymentTermsText = [termLabel, dueDateText ? `Due on ${dueDateText}` : ''].filter(Boolean).join(' ');
 
-    const tnc = (termsInfo?.Termsandconditions || '').toString();
+    const bankList = quote.Bankaccounts ?? quote.bankaccounts ?? quote.List5 ?? quote.list5 ?? [];
+    const firstBank = Array.isArray(bankList) && bankList.length > 0 ? bankList[0] : null;
+    const tncSource = termsInfo || firstBank || {};
+    const tnc = pickField(tncSource, 'Termsandconditions', 'termsandconditions', 'Terms', 'terms').toString();
     const tncText = tnc
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>/gi, '\n')
         .replace(/<[^>]+>/g, '')
         .trim();
 
+    const bankMerged = {
+        Accountname: pickField(tncSource, 'Accountname', 'accountname'),
+        Account_number: pickField(tncSource, 'Account_number', 'account_number'),
+        IBAN: pickField(tncSource, 'IBAN', 'iban'),
+        Bankname: pickField(tncSource, 'Bankname', 'bankname'),
+        Swift_code: pickField(tncSource, 'Swift_code', 'swift_code')
+    };
+
     const safeParse = (val) => {
-        const n = parseFloat(val);
-        return isNaN(n) ? 0 : n;
+        if (val == null || val === '') return 0;
+        // Strip commas, spaces, and narrow no-break spaces (e.g. "1 240.00" from API)
+        const normalized = val.toString().replace(/,/g, '').replace(/[\s\u00A0]+/g, '');
+        const n = parseFloat(normalized);
+        return isFinite(n) ? n : 0;
+    };
+
+    // Force comma thousands separators regardless of browser locale.
+    const fmtNumber = (val, fractionDigits = 2) => {
+        const n = safeParse(val);
+        const fixed = n.toFixed(fractionDigits);
+        const [intPart, decPart] = fixed.split('.');
+        const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return decPart != null ? `${withCommas}.${decPart}` : withCommas;
     };
 
     return (
@@ -141,8 +174,10 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
                         <Typography sx={{ fontSize: '0.8rem', fontWeight: 800 }}>Invoice No:</Typography>
                     </Box>
                     <Box sx={{ width: '30%', borderRight: '1px solid #000', p: 1 }}>
-                        <Typography sx={{ fontSize: '0.8rem', fontWeight: 700 }}>
-                            {quote.Status || quote.status || 'Draft'}
+                        <Typography sx={{ fontSize: '0.8rem', fontWeight: 700 }} className="sales-quote-invoice-no-text">
+                            {invoiceNoOverride != null && String(invoiceNoOverride).trim() !== ''
+                                ? String(invoiceNoOverride).trim()
+                                : pickField(quote, 'Salesquoteno', 'salesquoteno', 'Billno', 'billno') || 'Draft'}
                         </Typography>
                     </Box>
                     <Box sx={{ width: '20%', bgcolor: '#f2f2f2', borderRight: '1px solid #000', p: 1 }}>
@@ -230,25 +265,33 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
                     <TableHead>
                         <TableRow sx={{ bgcolor: '#f2f2f2' }}>
                             <TableCell sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>NO</TableCell>
-                            <TableCell sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>ITEM / CATEGORY</TableCell>
+                            <TableCell sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>ITEM</TableCell>
+                            <TableCell sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>DESCRIPTION</TableCell>
                             <TableCell align="right" sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>QTY</TableCell>
-                            <TableCell align="right" sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>PRICE</TableCell>
-                            <TableCell align="right" sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>VAT (%)</TableCell>
+                            <TableCell align="right" sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>AMOUNT</TableCell>
+                            <TableCell align="right" sx={{ borderRight: '1px solid #000', fontWeight: 900, py: 1 }}>VAT</TableCell>
                             <TableCell align="right" sx={{ fontWeight: 900, py: 1, bgcolor: '#f2f2f2' }}>TOTAL</TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {(() => {
+                            // Show both item lines and category lines (e.g. documentation charges)
                             const allRows = [
                                 ...(quote.items || []).map(item => ({ ...item, isCategory: false })),
-                                ...(quote.categories || []).map(cat => ({ ...cat, isCategory: true, Itemname: cat.Categoryname }))
+                                ...(quote.categories || []).map(cat => ({
+                                    ...cat,
+                                    isCategory: true,
+                                    // normalize naming from API
+                                    // For category lines we want the Description (e.g. "Documentation charges") shown under ITEM column
+                                    Itemname: cat.Description || cat.description || cat.Categoryname || cat.categoryname || 'Category'
+                                }))
                             ];
 
                             if (allRows.length === 0) {
                                 return (
                                     <TableRow sx={{ height: '35px' }}>
                                         <TableCell align="center" sx={{ borderRight: '1px solid #000', borderBottom: '1px solid #000' }}>1</TableCell>
-                                        <TableCell colSpan={5} sx={{ borderBottom: '1px solid #000' }} />
+                                        <TableCell colSpan={6} sx={{ borderBottom: '1px solid #000' }} />
                                     </TableRow>
                                 );
                             }
@@ -263,17 +306,40 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
                                             {row.Itemname || row.itemname || row.Categoryname || row.categoryname}
                                         </Typography>
                                     </TableCell>
+                                    <TableCell sx={{ borderRight: '1px solid #000', borderBottom: '1px solid #000' }}>
+                                        {row.isCategory ? null : (
+                                            <>
+                                                {(row.Modelno || row.modelno) ? (
+                                                    <Typography variant="caption" sx={{ display: 'block', fontWeight: 800, color: '#0f172a' }}>
+                                                        Modelno: {row.Modelno || row.modelno}
+                                                    </Typography>
+                                                ) : null}
+                                                <Typography variant="caption" sx={{ whiteSpace: 'pre-line' }}>
+                                                    {row.Description || row.description || ''}
+                                                </Typography>
+                                            </>
+                                        )}
+                                    </TableCell>
                                     <TableCell align="right" sx={{ borderRight: '1px solid #000', borderBottom: '1px solid #000', width: '80px' }}>
-                                        {safeParse(row.Qty || row.qty).toFixed(2)}
+                                        {row.isCategory ? '' : fmtNumber(row.Qty || row.qty, 2)}
                                     </TableCell>
                                     <TableCell align="right" sx={{ borderRight: '1px solid #000', borderBottom: '1px solid #000', width: '100px' }}>
-                                        {safeParse(row.Amount || row.amount).toFixed(2)}
+                                        {fmtNumber(row.isCategory ? (row.Amount ?? row.amount) : (row.Amount || row.amount), 2)}
                                     </TableCell>
                                     <TableCell align="right" sx={{ borderRight: '1px solid #000', borderBottom: '1px solid #000', width: '80px' }}>
-                                        {safeParse(row.Vat || row.vat || row.Vat_id || row.vat_id).toFixed(0)}%
+                                        {(() => {
+                                            const raw = row.isCategory
+                                                ? (row.Vatvalue ?? row.vatvalue ?? row.Vatid ?? row.vatid)
+                                                : (row.Vat ?? row.vat ?? row.Vat_id ?? row.vat_id);
+                                            const s = raw == null ? '' : String(raw).trim();
+                                            if (!s) return '';
+                                            const normalized = s.replace(/,/g, '');
+                                            const n = Number(normalized);
+                                            return Number.isFinite(n) ? `${n.toFixed(0)}%` : s;
+                                        })()}
                                     </TableCell>
                                     <TableCell align="right" sx={{ borderBottom: '1px solid #000', fontWeight: 700, width: '120px' }}>
-                                        {safeParse(row.Total || row.total).toFixed(2)}
+                                        {fmtNumber(row.isCategory ? (row.Total ?? row.total) : (row.Total || row.total), 2)}
                                     </TableCell>
                                 </TableRow>
                             ));
@@ -287,62 +353,62 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
                 <Box sx={{ flex: 1, p: 2, borderRight: '1px solid #000' }}>
                     <Typography variant="caption" fontWeight={700} sx={{ display: 'block' }}>Remarks:</Typography>
                     <Typography variant="caption">{quote.Remarks || quote.remarks}</Typography>
-                    {quote.Terms && (
-                        <>
-                            <Typography variant="caption" fontWeight={700} sx={{ display: 'block', mt: 1 }}>Terms:</Typography>
-                            <Typography variant="caption">{quote.Terms}</Typography>
-                        </>
-                    )}
                 </Box>
                 <Box sx={{ width: '250px', p: 1.5 }}>
+                    {(() => {
+                        // DB sends Currency as numeric id (e.g. 1). Don't show it as a prefix (it looks like "1 240.00").
+                        const money = (v) => fmtNumber(v, 2);
+                        return (
                     <Stack spacing={0.5}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                             <Typography sx={{ fontSize: '0.8rem', fontWeight: 700 }}>Subtotal:</Typography>
-                            <Typography sx={{ fontSize: '0.8rem', fontWeight: 900 }}>{safeParse(quote.Sub_total || quote.sub_total).toFixed(2)}</Typography>
+                            <Typography sx={{ fontSize: '0.8rem', fontWeight: 900 }}>{money(quote.Sub_total || quote.sub_total)}</Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                             <Typography sx={{ fontSize: '0.8rem', fontWeight: 700 }}>VAT Amount:</Typography>
-                            <Typography sx={{ fontSize: '0.8rem', fontWeight: 900 }}>{safeParse(quote.Vat_amount || quote.vat_amount).toFixed(2)}</Typography>
+                            <Typography sx={{ fontSize: '0.8rem', fontWeight: 900 }}>{money(quote.Vat_amount || quote.vat_amount)}</Typography>
                         </Box>
                         <Divider sx={{ my: 1 }} />
                         <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                             <Typography sx={{ fontSize: '0.9rem', fontWeight: 900 }}>Grand Total:</Typography>
-                            <Typography sx={{ fontSize: '0.9rem', fontWeight: 900 }}>{safeParse(quote.Grand_total || quote.grand_total).toFixed(2)}</Typography>
+                            <Typography sx={{ fontSize: '0.9rem', fontWeight: 900 }}>{money(quote.Grand_total || quote.grand_total)}</Typography>
                         </Box>
                     </Stack>
+                        );
+                    })()}
                 </Box>
             </Box>
 
             {/* Terms & Conditions */}
-            <Box sx={{ mt: 2, border: '1px solid #000', p: 1.5 }}>
-                <Typography sx={{ fontWeight: 900, fontSize: '0.9rem', mb: 1 }}>Terms and Conditions:</Typography>
-                {(tncText || termsInfo?.Bankname || termsInfo?.Account_number) ? (
+            <Box sx={{ mt: 0, border: '1px solid #000', p: 1.5 }}>
+                <Typography sx={{ fontWeight: 900, fontSize: '0.9rem', mb: 0.5 }}>Terms and Conditions:</Typography>
+                {(tncText || bankMerged.Bankname || bankMerged.Account_number) ? (
                     <Box sx={{ fontSize: '0.75rem', lineHeight: 1.45 }}>
                         {(() => {
                             // Split by "N. " pattern (e.g., "1. ", "2. ") or use whole text if no points found
                             let points = tncText.split(/(?=\b\d+\.\s)/g).filter(p => p.trim());
                             if (points.length === 0 && tncText.trim()) points = [tncText.trim()];
                             
-                            const bankInfoExists = (termsInfo?.Accountname || termsInfo?.Account_number || termsInfo?.IBAN || termsInfo?.Bankname || termsInfo?.Swift_code);
+                            const bankInfoExists = !!(bankMerged.Accountname || bankMerged.Account_number || bankMerged.IBAN || bankMerged.Bankname || bankMerged.Swift_code);
                             
                             if (points.length === 0 && !bankInfoExists) return <Typography variant="caption">No terms and conditions found for this catalog.</Typography>;
                             
                             return points.map((point, idx) => (
                                     <React.Fragment key={idx}>
-                                        <Typography sx={{ fontSize: '0.75rem', whiteSpace: 'pre-line', mb: 1.5, lineHeight: 1.45 }}>
+                                        <Typography sx={{ fontSize: '0.75rem', whiteSpace: 'pre-line', mb: 0.5, lineHeight: 1.45 }}>
                                             {point.trim()}
                                         </Typography>
                                         
                                         {/* Inject Bank Details after point 1 to match requested design */}
                                         {idx === 0 && bankInfoExists && (
-                                            <Box sx={{ mb: 1.5, pl: 0 }}>
+                                            <Box sx={{ mb: 0.5, pl: 0 }}>
                                                 <Typography sx={{ fontWeight: 900, fontSize: '0.85rem', mb: 0.5 }}>Bank Details:</Typography>
                                                 <Typography sx={{ fontSize: '0.75rem', lineHeight: 1.45 }}>
-                                                    {termsInfo?.Accountname && <>Account Name: {termsInfo.Accountname}<br /></>}
-                                                    {termsInfo?.Account_number && <>Account Number (AED): {termsInfo.Account_number}<br /></>}
-                                                    {termsInfo?.IBAN && <>IBAN: {termsInfo.IBAN}<br /></>}
-                                                    {termsInfo?.Bankname && <>Bank Name: {termsInfo.Bankname}<br /></>}
-                                                    {termsInfo?.Swift_code && <>Swift Code: {termsInfo.Swift_code}</>}
+                                                    {bankMerged.Accountname && <>Account Name: {bankMerged.Accountname}<br /></>}
+                                                    {bankMerged.Account_number && <>Account Number (AED): {bankMerged.Account_number}<br /></>}
+                                                    {bankMerged.IBAN && <>IBAN: {bankMerged.IBAN}<br /></>}
+                                                    {bankMerged.Bankname && <>Bank Name: {bankMerged.Bankname}<br /></>}
+                                                    {bankMerged.Swift_code && <>Swift Code: {bankMerged.Swift_code}</>}
                                                 </Typography>
                                             </Box>
                                         )}
@@ -352,15 +418,15 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
                         </Box>
                     ) : (
                         // Fallback: Bank Details only
-                        (termsInfo?.Accountname || termsInfo?.Account_number || termsInfo?.IBAN || termsInfo?.Bankname || termsInfo?.Swift_code) ? (
+                        (bankMerged.Accountname || bankMerged.Account_number || bankMerged.IBAN || bankMerged.Bankname || bankMerged.Swift_code) ? (
                             <Box sx={{ mt: 1.5 }}>
                                 <Typography sx={{ fontWeight: 900, fontSize: '0.85rem', mb: 0.5 }}>Bank Details:</Typography>
                                 <Typography sx={{ fontSize: '0.75rem', lineHeight: 1.45 }}>
-                                    {termsInfo?.Accountname && <>Account Name: {termsInfo.Accountname}<br /></>}
-                                    {termsInfo?.Account_number && <>Account Number (AED): {termsInfo.Account_number}<br /></>}
-                                    {termsInfo?.IBAN && <>IBAN: {termsInfo.IBAN}<br /></>}
-                                    {termsInfo?.Bankname && <>Bank Name: {termsInfo.Bankname}<br /></>}
-                                    {termsInfo?.Swift_code && <>Swift Code: {termsInfo.Swift_code}</>}
+                                    {bankMerged.Accountname && <>Account Name: {bankMerged.Accountname}<br /></>}
+                                    {bankMerged.Account_number && <>Account Number (AED): {bankMerged.Account_number}<br /></>}
+                                    {bankMerged.IBAN && <>IBAN: {bankMerged.IBAN}<br /></>}
+                                    {bankMerged.Bankname && <>Bank Name: {bankMerged.Bankname}<br /></>}
+                                    {bankMerged.Swift_code && <>Swift Code: {bankMerged.Swift_code}</>}
                                 </Typography>
                             </Box>
                         ) : null
@@ -377,16 +443,36 @@ const SalesQuoteTemplate = ({ quote, termsInfo, id = "sales-quote-template" }) =
     );
 };
 
-const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
+
+const SalesQuoteApprovalView = ({ quoteId, onBack, showManagerApprovalButton = true }) => {
     const navigate = useNavigate();
-    const [quote, setQuote] = useState(null);
+    const [quote, setQuote] = useState({
+        items: [],
+        categories: [],
+        Vatdetails: [],
+        Bankaccounts: [],
+        Sub_total: 0,
+        Vat_amount: 0,
+        Grand_total: 0,
+        remarks: '',
+        terms: '',
+        Customername: '',
+        Billing_address: '',
+        Shipping_address: '',
+        Phoneno: '',
+        Contact: '',
+        Salespersonname: ''
+    });
     const [termsInfo, setTermsInfo] = useState(null);
     const [loading, setLoading] = useState(true);
     const [pdfUrl, setPdfUrl] = useState('');
     const [showPdfPreview, setShowPdfPreview] = useState(false);
     const [pdfLoading, setPdfLoading] = useState(false);
     const [numPages, setNumPages] = useState(0);
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const [detailRevision, setDetailRevision] = useState(0);
+    const [managerApprovalBusy, setManagerApprovalBusy] = useState(false);
+    const [convertBusy, setConvertBusy] = useState(false);
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const previewRef = useRef(null);
     const [previewWidth, setPreviewWidth] = useState(900);
 
@@ -394,44 +480,74 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
         const fetchDetails = async () => {
             if (!quoteId) return;
             try {
-                // Fetch customer details using the specific user-requested endpoint
+                setLoading(true);
+                
+                // 1. Fetch full quote details from legacy endpoint (updated with user logic)
                 const formData = new FormData();
-                formData.append('pid', quoteId);
-                const custRes = await fetch(`${API_URL}/api/Sales/Getcustomersalesbilldetailsquote`, {
+                formData.append('billid', quoteId);
+                
+                const response = await fetch(`${API_URL}/api/Sales/Getcustomerbillsdetailssalesquote`, {
                     method: 'POST',
                     body: formData
                 });
-                const custData = await custRes.json();
-
-                // Fetch full quote details (items, categories, etc.)
-                const response = await fetch(`${API_URL}/api/salesquote/details/${quoteId}`);
                 const data = await response.json();
-                
-                if (data.success) {
+
+                // API may return either PascalCase (List1) or camelCase (list1) depending on JSON settings.
+                const list1 = data?.List1 ?? data?.list1 ?? [];
+                const list3 = data?.List3 ?? data?.list3 ?? [];
+                const list4 = data?.List4 ?? data?.list4 ?? [];
+                const list5 = data?.List5 ?? data?.list5 ?? [];
+
+                if (Array.isArray(list1) || Array.isArray(list3)) {
                     setQuote({
-                        ...data.header,
-                        ...custData,
-                        // Ensure key header fields from the special function are mapped correctly
-                        Customername: custData.companyname || data.header.Customername || data.header.customername,
-                        Billing_address: custData.mailingaddress || data.header.Billing_address || data.header.billing_address,
-                        Phoneno: custData.phone || data.header.Phoneno || data.header.phoneno,
-                        Contact: custData.contact || data.header.Contact || data.header.contact,
-                        items: data.items || [],
-                        categories: data.categories || []
+                        ...data,
+                        items: Array.isArray(list1) ? list1 : [],
+                        categories: Array.isArray(list3) ? list3 : [],
+                        // Direct mapping for UI templates
+                        Customername: data?.companyname ?? data?.Companyname ?? data?.Customername ?? data?.customername ?? '',
+                        Billing_address: data?.Billing_address ?? data?.billing_address ?? data?.mailingaddress ?? '',
+                        Shipping_address: data?.Shipping_address ?? data?.shipping_address ?? data?.shippingAddress ?? '',
+                        Phoneno: data?.phoneno ?? data?.Phoneno ?? data?.phone ?? '',
+                        Contact: data?.contact ?? data?.Contact ?? '',
+                        Remarks: data?.remarks ?? data?.Remarks ?? '',
+                        Salespersonname: data?.salesperson1 ?? data?.Salespersonname ?? data?.salespersonname ?? '',
+                        Sub_total: data?.subtotal ?? data?.Sub_total ?? data?.sub_total ?? 0,
+                        Vat_amount: data?.vat ?? data?.Vat_amount ?? data?.vat_amount ?? 0,
+                        Grand_total: data?.grandtotal ?? data?.Grand_total ?? data?.grand_total ?? 0,
+                        Terms: data?.terms ?? data?.Terms ?? '',
+                        Billdate: data?.billdate ?? data?.Billdate ?? '',
+                        Duedate: data?.duedate ?? data?.Duedate ?? '',
+                        Status: data?.Status ?? data?.status ?? '',
+                        Managerapprovestatus:
+                            data?.Managerapprovestatus ?? data?.managerapprovestatus ?? data?.ManagerApprovalStatus ?? '',
+                        Salesquoteno: data?.billno ?? data?.Billno ?? data?.Salesquoteno ?? data?.salesquoteno ?? '',
+                        Vatnumber: data?.vatnumber ?? data?.Vatnumber ?? '',
+                        CustomerTrn: data?.vatnumber ?? data?.Vatnumber ?? data?.CustomerTrn ?? data?.customerTrn ?? '',
+                        Bankaccounts: Array.isArray(list5) ? list5 : [],
+                        Vatdetails: Array.isArray(list4) ? list4 : []
                     });
-                } else if (custData.id) {
-                    // Fallback to minimal data from the customer function if the main details API fails
-                    setQuote({
-                        ...custData,
-                        Customername: custData.companyname,
-                        Billing_address: custData.mailingaddress,
-                        Phoneno: custData.phone,
-                        items: data.items || [],
-                        categories: data.categories || []
-                    });
-                } else {
-                    Swal.fire('Error', data.message || 'Failed to fetch details', 'error');
                 }
+                
+                // 2. Supplementary: Fetch additional customer-specific info if companyname is still missing
+                if (!data.companyname) {
+                    const custForm = new FormData();
+                    custForm.append('pid', quoteId);
+                    const custRes = await fetch(`${API_URL}/api/Sales/Getcustomersalesbilldetailsquote`, {
+                        method: 'POST',
+                        body: custForm
+                    });
+                    if (custRes.ok) {
+                        const custData = await custRes.json();
+                        setQuote(prev => ({
+                            ...prev,
+                            Customername: custData.companyname || prev.Customername,
+                            Billing_address: custData.mailingaddress || prev.Billing_address,
+                            Phoneno: prev.Phoneno || custData.phone,
+                            Contact: prev.Contact || custData.contact
+                        }));
+                    }
+                }
+
             } catch (error) {
                 console.error("Error:", error);
                 Swal.fire('Error', 'Network or Server Error', 'error');
@@ -440,7 +556,86 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
             }
         };
         fetchDetails();
-    }, [quoteId]);
+    }, [quoteId, detailRevision, API_URL]);
+
+    const handleConvertToSales = async () => {
+        if (!quoteId || convertBusy) return;
+        const loggedInUser = JSON.parse(localStorage.getItem('user') || '{}');
+        const userid = String(loggedInUser?.Userid || loggedInUser?.userid || '').trim();
+        if (!userid) {
+            Swal.fire('Error', 'User not logged in', 'error');
+            return;
+        }
+        const confirm = await Swal.fire({
+            title: 'Convert to sales?',
+            text: 'Creates a draft sales invoice from this approved quote (packing status update + bill save).',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Convert',
+            cancelButtonText: 'Cancel'
+        });
+        if (!confirm.isConfirmed) return;
+
+        setConvertBusy(true);
+        try {
+            const res = await fetch(`${API_URL}/api/salesquote/convert-to-sales`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ quoteId: String(quoteId), userid })
+            });
+            const data = await res.json().catch(() => ({}));
+            const msg = data?.message ?? data?.Message ?? '';
+            if (!res.ok) {
+                Swal.fire({ title: 'Error', text: msg || 'Conversion failed', icon: 'error' });
+                return;
+            }
+            Swal.fire({
+                title: 'Success',
+                text: msg || (data?.salesBillId ? `Draft invoice created (id ${data.salesBillId}).` : 'Converted to sales.'),
+                icon: 'success'
+            });
+            setDetailRevision((r) => r + 1);
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'Network or server error', 'error');
+        } finally {
+            setConvertBusy(false);
+        }
+    };
+
+    const handleManagerApproval = async () => {
+        if (!quoteId || managerApprovalBusy) return;
+        setManagerApprovalBusy(true);
+        try {
+            const res = await fetch(
+                `${API_URL}/api/salesquote/manager-approval?billid=${encodeURIComponent(String(quoteId))}`,
+                { method: 'GET' }
+            );
+            const data = await res.json().catch(() => ({}));
+            const msg = data?.msg ?? data?.Msg ?? '';
+            if (!res.ok) {
+                Swal.fire({
+                    title: 'Error',
+                    text: msg || data?.error || 'Request failed',
+                    icon: 'error'
+                });
+                return;
+            }
+            if (msg) {
+                Swal.fire({
+                    title: 'Success!',
+                    text: msg,
+                    icon: 'info'
+                });
+                setDetailRevision((r) => r + 1);
+            }
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'Network or server error', 'error');
+        } finally {
+            setManagerApprovalBusy(false);
+        }
+    };
 
     useEffect(() => {
         const loggedInUser = JSON.parse(localStorage.getItem('user') || '{}');
@@ -453,7 +648,8 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
                 const catId = quote?.Catelogid || quote?.catelogid || loggedInUser?.Catelogid || loggedInUser?.catelogid || '';
                 const res = await fetch(`${API_URL}/api/termsandcondition?userid=${encodeURIComponent(effectiveUserId)}&type=${encodeURIComponent('Invoice')}&catalogId=${encodeURIComponent(catId)}`);
                 const data = await res.json().catch(() => ({}));
-                const row = (data?.list && Array.isArray(data.list) && data.list.length > 0) ? data.list[0] : null;
+                const rawList = data?.list ?? data?.List ?? [];
+                const row = (Array.isArray(rawList) && rawList.length > 0) ? rawList[0] : null;
                 setTermsInfo(row);
             } catch (e) {
                 console.error('termsandcondition fetch error:', e);
@@ -496,10 +692,12 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
         const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
         // Multi-page support (when template is taller than one A4 page).
-        // Add top/bottom margins and a small overlap so table rows don't get cut on page breaks.
+        // No overlap between tiles — overlap caused repeated T&C lines across pages.
         const marginTopMm = 8;
         const marginBottomMm = 8;
-        const overlapMm = 10; // repeat a bit of content between pages
+        const overlapMm = 0;
+        // Extra white band at top of page 2+ (drawn after image to cover the seam strip).
+        const continuationTopPadMm = 14;
 
         const usablePageHeight = Math.max(1, pdfPageHeight - marginTopMm - marginBottomMm);
         const stepHeight = Math.max(1, usablePageHeight - overlapMm);
@@ -507,9 +705,13 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
 
         for (let page = 0; page < totalPages; page++) {
             if (page > 0) pdf.addPage();
-            // Shift the same tall image upwards; keep a fixed top margin.
-            const y = marginTopMm - (page * stepHeight);
+            // Page 1+: align so document y = continuationTopPadMm shows image at page * stepHeight (no duplicate text).
+            const y = page === 0 ? marginTopMm : continuationTopPadMm - page * stepHeight;
             pdf.addImage(imgData, 'PNG', 0, y, pdfWidth, pdfHeight);
+            if (page > 0 && continuationTopPadMm > 0) {
+                pdf.setFillColor(255, 255, 255);
+                pdf.rect(0, 0, pdfWidth, continuationTopPadMm, 'F');
+            }
         }
 
         const blob = pdf.output('blob');
@@ -570,6 +772,31 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
         }
     };
 
+    /**
+     * "MANAGER APPROVAL" = send quote to manager queue (gomanagerapprovalquote → Status Active).
+     * Show when user can still submit: Draft (or unknown header). Hide while already in queue (Active) or final.
+     * Note: After an edit-request approval, Status is Draft again but Managerapprovestatus may still be "1" from
+     * the previous cycle — do not hide on mas alone or the button never returns.
+     */
+    const showManagerApprovalUi = useMemo(() => {
+        if (!showManagerApprovalButton || loading) return false;
+        const st = String(
+            quote?.Status ?? quote?.status ?? quote?.billstatus ?? quote?.BillStatus ?? ''
+        )
+            .trim()
+            .toLowerCase();
+        if (st === 'approved' || st === 'converted' || st === 'rejected') return false;
+        if (st === 'active') return false;
+        return st === 'draft' || st === '';
+    }, [showManagerApprovalButton, quote, loading]);
+
+    /** After manager approval flow: show when quote is Approved and not yet Converted. */
+    const showConvertToSales = useMemo(() => {
+        if (loading) return false;
+        const st = String(quote?.Status ?? quote?.status ?? '').trim().toLowerCase();
+        return st === 'approved';
+    }, [quote, loading]);
+
     if (loading) return <Box sx={{ p: 5, textAlign: 'center' }}><CircularProgress /></Box>;
     if (!quote) return <Box sx={{ p: 5, textAlign: 'center' }}>No quote found</Box>;
 
@@ -590,28 +817,72 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
             <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: '0 0 auto' }}>
                 <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={onBack}>Back</Button>
                 <Stack direction="row" spacing={2}>
-                    <Button variant="contained" startIcon={<PrintIcon />} onClick={() => window.print()}>Print</Button>
+                    {showManagerApprovalUi && (
+                        <Button
+                            variant="contained"
+                            disabled={managerApprovalBusy || !quoteId}
+                            onClick={handleManagerApproval}
+                            sx={{
+                                bgcolor: '#15803d !important',
+                                color: '#fff !important',
+                                '&:hover': {
+                                    bgcolor: '#166534 !important',
+                                    color: '#fff !important'
+                                },
+                                '&.Mui-disabled': {
+                                    bgcolor: 'rgba(0, 0, 0, 0.12) !important',
+                                    color: 'rgba(0, 0, 0, 0.26) !important'
+                                }
+                            }}
+                        >
+                            {managerApprovalBusy ? 'Sending…' : 'MANAGER APPROVAL'}
+                        </Button>
+                    )}
+                    {showConvertToSales && (
+                        <Button
+                            variant="contained"
+                            disabled={convertBusy || !quoteId}
+                            onClick={handleConvertToSales}
+                            sx={{
+                                bgcolor: '#0369a1 !important',
+                                color: '#fff !important',
+                                '&:hover': { bgcolor: '#075985 !important', color: '#fff !important' },
+                                '&.Mui-disabled': {
+                                    bgcolor: 'rgba(0, 0, 0, 0.12) !important',
+                                    color: 'rgba(0, 0, 0, 0.26) !important'
+                                }
+                            }}
+                        >
+                            {convertBusy ? 'Converting…' : 'Convert to sales'}
+                        </Button>
+                    )}
+                    <Button variant="contained" color="error" startIcon={<PrintIcon />} onClick={() => window.print()}>Print</Button>
                     <Button
                         variant="contained"
-                        color={showPdfPreview ? 'inherit' : 'info'}
+                        color={showPdfPreview ? 'inherit' : 'error'}
                         startIcon={showPdfPreview ? <CloseIcon /> : <VisibilityIcon />}
                         onClick={async () => {
                             const next = !showPdfPreview;
                             setShowPdfPreview(next);
-                            if (next) {
+                            if (!next) {
+                                setPdfUrl(prev => {
+                                    if (prev) URL.revokeObjectURL(prev);
+                                    return '';
+                                });
+                            } else {
                                 try { await ensurePdfPreview(); } catch { /* ignore */ }
                             }
                         }}
                     >
                         {showPdfPreview ? 'Hide PDF' : 'View PDF'}
                     </Button>
-                    <Button variant="contained" color="secondary" startIcon={<DownloadIcon />} onClick={handleDownloadPDF}>Download PDF</Button>
+                    <Button variant="contained" color="error" startIcon={<DownloadIcon />} onClick={handleDownloadPDF}>Download PDF</Button>
                 </Stack>
             </Box>
 
             {/* Keep a hidden template in DOM for PDF generation */}
             <Box sx={{ display: 'flex', justifyContent: 'center', position: 'absolute', left: -10000, top: 0 }}>
-                <SalesQuoteTemplate quote={quote} id="sales-quote-template" />
+                <SalesQuoteTemplate quote={quote} termsInfo={termsInfo} id="sales-quote-template" />
             </Box>
 
             {showPdfPreview ? (
@@ -669,7 +940,7 @@ const SalesQuoteApprovalView = ({ quoteId, onBack }) => {
                                 onLoadSuccess={({ numPages: n }) => setNumPages(n)}
                             >
                                 {Array.from({ length: numPages || 0 }, (_, i) => (
-                                    <Box key={i} sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                                    <Box key={i} sx={{ display: 'flex', justifyContent: 'center', mb: 2, ...(i > 0 ? { mt: 1.5 } : {}) }}>
                                         <Page
                                             pageNumber={i + 1}
                                             width={Math.min(previewWidth - 24, 980)}

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Net;
+using System.Net.Sockets;
 using System.Data;
 using Api.Models;
 using Api.Extensions;
@@ -27,27 +29,36 @@ builder.WebHost.ConfigureKestrel(options =>
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddScoped<SqlConnection>(provider => new SqlConnection(connectionString));
 
-// Enable CORS
+// Enable CORS — localhost + private IPv4 LAN (10/8, 172.16–31, 192.168/16) for Vite dev on another device
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:5173", 
-            "http://localhost:5174", 
-            "http://localhost:5175", 
-            "http://localhost:5176", 
-            "http://localhost:5177", 
-            "http://localhost:5178", 
-            "http://localhost:5179", 
-            "http://localhost:5180",
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://localhost:50029"
-        )
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        policy.SetIsOriginAllowed(origin =>
+            {
+                if (string.IsNullOrWhiteSpace(origin)) return false;
+                try
+                {
+                    var uri = new Uri(origin);
+                    if (uri.Scheme != "http" && uri.Scheme != "https") return false;
+                    if (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+                    if (uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) return true;
+                    if (!IPAddress.TryParse(uri.Host, out var ip)) return false;
+                    if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
+                    var b = ip.GetAddressBytes();
+                    if (b[0] == 10) return true;
+                    if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
+                    if (b[0] == 192 && b[1] == 168) return true;
+                    return false;
+                }
+                catch
+                {
+                    return false;
+                }
+            })
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
@@ -11272,6 +11283,8 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
     {
         await connection.OpenAsync();
         using var transaction = connection.BeginTransaction();
+        int quoteId = 0;
+        var isUpdate = false;
         try
         {
             var form = await request.ReadFormAsync();
@@ -11287,7 +11300,8 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                 ? new List<SalesQuoteVatData>()
                 : (System.Text.Json.JsonSerializer.Deserialize<List<SalesQuoteVatData>>(tableDatavatJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<SalesQuoteVatData>());
 
-            int quoteId = 0;
+            quoteId = 0;
+            isUpdate = int.TryParse((quoteData.Id ?? "").ToString(), out quoteId) && quoteId > 0;
 
             // Legacy behavior: when saving as Draft, Salesquoteno should stay "Draft" (no auto-numbering).
             var normalizedStatus = (quoteData.Status ?? "Draft").Trim();
@@ -11297,52 +11311,87 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
             if (string.IsNullOrWhiteSpace(quoteData.Vatnumber))
                 quoteData.Vatnumber = "100509789200003";
 
-            using (var cmd = new SqlCommand("SELECT COUNT(Salesquoteno) AS 'Salesquoteno' FROM Tbl_Salesquote", connection, transaction))
+            // For updates we keep existing Salesquoteno; for inserts we generate (unless Draft).
+            if (!isUpdate)
             {
-                var countStr = cmd.ExecuteScalar()?.ToString();
-                int pidcount = int.TryParse(countStr, out int c) ? c : 0;
-                
-                // Only generate a running number for non-draft records.
-                if (isDraft)
+                using (var cmd = new SqlCommand("SELECT COUNT(Salesquoteno) AS 'Salesquoteno' FROM Tbl_Salesquote", connection, transaction))
+                {
+                    var countStr = cmd.ExecuteScalar()?.ToString();
+                    int pidcount = int.TryParse(countStr, out int c) ? c : 0;
+                    
+                    // Only generate a running number for non-draft records.
+                    if (isDraft)
+                    {
+                        quoteData.Salesquoteno = "Draft";
+                    }
+                    else
+                    {
+                        // Prefer document format table if present; otherwise fallback to AGT-YYYYMM####.
+                        try
+                        {
+                            using (var getformat = new SqlCommand("SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete='0'", connection, transaction))
+                            {
+                                using (var reader = getformat.ExecuteReader())
+                                {
+                                    if (reader.Read())
+                                    {
+                                        string prefix = reader["prefix"].ToString() ?? "";
+                                        string suffix = reader["Suffix"].ToString() ?? "";
+                                        int noofdigits = Convert.ToInt32(reader["Noofdigit"]);
+
+                                        string nextcount = noofdigits > 0 ? (pidcount + 1).ToString().PadLeft(noofdigits, '0') : (pidcount + 1).ToString();
+                                        quoteData.Salesquoteno = prefix + nextcount + suffix;
+                                    }
+                                }
+                            }
+                        }
+                        catch (SqlException ex) when (ex.Number == 208)
+                        {
+                            // ignore: missing table
+                        }
+
+                        if (string.IsNullOrWhiteSpace(quoteData.Salesquoteno))
+                        {
+                            var ym = DateTime.Now.ToString("yyyyMM");
+                            quoteData.Salesquoteno = $"AGT-{ym}{(pidcount + 1).ToString().PadLeft(4, '0')}";
+                        }
+                    }
+                }
+            }
+
+            // Draft + new quote: placeholder only. Draft + update: keep issued Salesquoteno (approved quote re-opened for edit).
+            if (isDraft)
+            {
+                if (!isUpdate)
                 {
                     quoteData.Salesquoteno = "Draft";
                 }
                 else
                 {
-                    // Prefer document format table if present; otherwise fallback to AGT-YYYYMM####.
-                    try
+                    var incoming = (quoteData.Salesquoteno ?? "").Trim();
+                    var clientHasIssuedNo = incoming.Length > 0
+                        && !string.Equals(incoming, "Draft", StringComparison.OrdinalIgnoreCase);
+                    if (!clientHasIssuedNo)
                     {
-                        using (var getformat = new SqlCommand("SELECT Isnull(Prefix,'') as prefix, Isnull(suffix,'') as Suffix, Isnull(No_of_digits,0) as Noofdigit FROM Tbl_Salesquotedocumentformat WHERE Isdelete='0'", connection, transaction))
+                        await using (var loadNo = new SqlCommand(
+                                         """
+                                         SELECT Salesquoteno FROM Tbl_Salesquote
+                                         WHERE Id = @Id AND (Isdelete IS NULL OR Isdelete = '0' OR Isdelete = 0)
+                                         """,
+                                         connection,
+                                         transaction))
                         {
-                            using (var reader = getformat.ExecuteReader())
-                            {
-                                if (reader.Read())
-                                {
-                                    string prefix = reader["prefix"].ToString() ?? "";
-                                    string suffix = reader["Suffix"].ToString() ?? "";
-                                    int noofdigits = Convert.ToInt32(reader["Noofdigit"]);
-
-                                    string nextcount = noofdigits > 0 ? (pidcount + 1).ToString().PadLeft(noofdigits, '0') : (pidcount + 1).ToString();
-                                    quoteData.Salesquoteno = prefix + nextcount + suffix;
-                                }
-                            }
+                            loadNo.Parameters.AddWithValue("@Id", quoteId);
+                            var existing = (await loadNo.ExecuteScalarAsync())?.ToString()?.Trim() ?? "";
+                            if (!string.IsNullOrEmpty(existing)
+                                && !string.Equals(existing, "Draft", StringComparison.OrdinalIgnoreCase))
+                                quoteData.Salesquoteno = existing;
+                            else
+                                quoteData.Salesquoteno = "Draft";
                         }
-                    }
-                    catch (SqlException ex) when (ex.Number == 208)
-                    {
-                        // ignore: missing table
-                    }
-
-                    if (string.IsNullOrWhiteSpace(quoteData.Salesquoteno))
-                    {
-                        var ym = DateTime.Now.ToString("yyyyMM");
-                        quoteData.Salesquoteno = $"AGT-{ym}{(pidcount + 1).ToString().PadLeft(4, '0')}";
                     }
                 }
             }
-
-            // Ensure draft always stores Salesquoteno = "Draft" even if client sent a number.
-            if (isDraft) quoteData.Salesquoteno = "Draft";
 
             using (var command = new SqlCommand("Sp_Salesquote", connection, transaction))
             {
@@ -11350,10 +11399,9 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                     => value.HasValue ? value.Value.ToString("0.##", CultureInfo.InvariantCulture) : fallback;
 
                 command.CommandType = CommandType.StoredProcedure;
-                command.Parameters.AddWithValue("@Query", 1);
-                // Stored procedure returns the new Id via `select @Id as Id` (not OUTPUT param),
-                // so we pass a normal input param and read ExecuteScalar().
-                command.Parameters.AddWithValue("@Id", 0);
+                command.Parameters.AddWithValue("@Query", isUpdate ? 2 : 1);
+                // SP returns Id on insert (ExecuteScalar); on update it may not, so we keep quoteId.
+                command.Parameters.AddWithValue("@Id", isUpdate ? quoteId : 0);
                 
                 command.Parameters.AddWithValue("@Userid", quoteData.Userid ?? "Admin");
                 command.Parameters.AddWithValue("@Customerid", string.IsNullOrEmpty(quoteData.Customerid) ? DBNull.Value : quoteData.Customerid);
@@ -11386,8 +11434,75 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                 command.Parameters.AddWithValue("@Discountamount", quoteData.Discountamount.HasValue ? ToDbNumber(quoteData.Discountamount) : DBNull.Value);
                 command.Parameters.AddWithValue("@Catelogid", DBNull.Value);
 
-                var inserted = await command.ExecuteScalarAsync();
-                quoteId = inserted == null ? 0 : Convert.ToInt32(inserted);
+                if (!isUpdate)
+                {
+                    var inserted = await command.ExecuteScalarAsync();
+                    quoteId = inserted == null ? 0 : Convert.ToInt32(inserted);
+                }
+                else
+                {
+                    await command.ExecuteNonQueryAsync();
+                }
+            }
+
+            // For updates, clear existing detail rows first (then insert fresh) – matches legacy Editsalesbilldetailsquote behavior.
+            if (isUpdate)
+            {
+                // 1) Delete existing item details
+                using (var del = new SqlCommand("Sp_Salesquotedetails", connection, transaction))
+                {
+                    del.CommandType = CommandType.StoredProcedure;
+                    del.Parameters.AddWithValue("@Id", "");
+                    del.Parameters.AddWithValue("@Userid", "");
+                    del.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
+                    del.Parameters.AddWithValue("@Itemid", "");
+                    del.Parameters.AddWithValue("@Qty", "");
+                    del.Parameters.AddWithValue("@Amount", "");
+                    del.Parameters.AddWithValue("@Vat", "");
+                    del.Parameters.AddWithValue("@Vat_id", "");
+                    del.Parameters.AddWithValue("@Total", "");
+                    del.Parameters.AddWithValue("@Status", "");
+                    del.Parameters.AddWithValue("@Isdelete", "");
+                    del.Parameters.AddWithValue("@Type", "");
+                    del.Parameters.AddWithValue("@Query", 5);
+                    await del.ExecuteNonQueryAsync();
+                }
+
+                // 2) Delete existing category rows
+                using (var delCat = new SqlCommand("Sp_Purchasecategorydetails", connection, transaction))
+                {
+                    delCat.CommandType = CommandType.StoredProcedure;
+                    delCat.Parameters.AddWithValue("@Id", "");
+                    delCat.Parameters.AddWithValue("@Billid", quoteId.ToString());
+                    delCat.Parameters.AddWithValue("@Customerid", "");
+                    delCat.Parameters.AddWithValue("@Type", "Salesquote");
+                    delCat.Parameters.AddWithValue("@Categoryid", "");
+                    delCat.Parameters.AddWithValue("@Description", "");
+                    delCat.Parameters.AddWithValue("@Amount", "");
+                    delCat.Parameters.AddWithValue("@Vatvalue", "");
+                    delCat.Parameters.AddWithValue("@Vatid", "");
+                    delCat.Parameters.AddWithValue("@Total", "");
+                    delCat.Parameters.AddWithValue("@Customer", "");
+                    delCat.Parameters.AddWithValue("@Isdelete", "");
+                    delCat.Parameters.AddWithValue("@Query", 5);
+                    await delCat.ExecuteNonQueryAsync();
+                }
+
+                // 3) Delete existing vat breakdown rows
+                using (var delVat = new SqlCommand("Sp_Purchasevatdetails", connection, transaction))
+                {
+                    delVat.CommandType = CommandType.StoredProcedure;
+                    delVat.Parameters.AddWithValue("@Id", "");
+                    delVat.Parameters.AddWithValue("@Billid", quoteId.ToString());
+                    delVat.Parameters.AddWithValue("@Customerid", "");
+                    delVat.Parameters.AddWithValue("@Type", "Salesquote");
+                    delVat.Parameters.AddWithValue("@Vatid", "");
+                    delVat.Parameters.AddWithValue("@Price", "");
+                    delVat.Parameters.AddWithValue("@Vatamount", "");
+                    delVat.Parameters.AddWithValue("@Isdelete", "");
+                    delVat.Parameters.AddWithValue("@Query", 5);
+                    await delVat.ExecuteNonQueryAsync();
+                }
             }
 
             try
@@ -11492,7 +11607,7 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
                 log.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
                 log.Parameters.AddWithValue("@Approveuserid", "");
                 log.Parameters.AddWithValue("@Editreason", "");
-                log.Parameters.AddWithValue("@Comments", $"{quoteData.Salesquoteno} - Added");
+                log.Parameters.AddWithValue("@Comments", $"{quoteData.Salesquoteno} - {(isUpdate ? "Updated" : "Added")}");
                 log.Parameters.AddWithValue("@Isdelete", "0");
                 log.Parameters.AddWithValue("@Status", "Active");
                 log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -11506,12 +11621,12 @@ app.MapPost("/api/salesquote/save", async (HttpRequest request, SqlConnection co
 
             transaction.Commit();
             if (quoteId <= 0) return Results.Problem("Sales quote save failed (no Id returned).", statusCode: 500);
-            return Results.Ok(new { success = true, Message = "Sales quote created successfully", QuoteId = quoteId });
+            return Results.Ok(new { success = true, Message = isUpdate ? "Sales quote updated successfully" : "Sales quote created successfully", QuoteId = quoteId });
         }
         catch (Exception ex)
         {
             transaction.Rollback();
-            return Results.Problem(ex.Message, statusCode: 500, title: "Failed to create sales quote");
+            return Results.Problem(ex.Message, statusCode: 500, title: isUpdate ? "Failed to update sales quote" : "Failed to create sales quote");
         }
     }
     catch (Exception ex)
@@ -11555,7 +11670,8 @@ app.MapGet("/api/salesquote", async (SqlConnection connection) =>
     }
 });
 
-app.MapDelete("/api/salesquote/{id}", async (int id, SqlConnection connection) => 
+// Use /by-id/{id} so POST /api/salesquote/soft-delete is never matched as {id} (avoids 405 Method Not Allowed).
+app.MapDelete("/api/salesquote/by-id/{id}", async (int id, SqlConnection connection) => 
 {
     try
     {
@@ -11743,34 +11859,54 @@ app.MapGet("/api/salesquote/pending", async (SqlConnection connection) =>
     }
 });
 
-app.MapPost("/api/salesquote/approve", async (HttpContext context, SqlConnection connection) => 
+// Sp_Salesquote Q9 + Sp_Salesquotelog Q3 (shared handler; HttpContext avoids fragile query binding)
+app.MapGet("/api/salesquote/approval-details-quote", Api.SalesQuoteApprovalDetailsHandler.Handle);
+app.MapGet("/api/Sales/Getsalesbillapprovaldetailsquote", Api.SalesQuoteApprovalDetailsHandler.Handle);
+
+// Draft sales invoices (Tbl_Salesbill) for Approvals → Sales bill approval (legacy MVC: /Sales/Getsalesbillapprovaldetails)
+app.MapGet("/api/salesbill/approval-pending-list", Api.SalesBillApprovalListHandler.Handle);
+app.MapGet("/api/Sales/Getsalesbillapprovaldetails", Api.SalesBillApprovalListHandler.Handle);
+app.MapGet("/api/Sales/seteditreasonsalesbill", Api.SalesBillSetEditReasonHandler.Handle);
+
+// Legacy savesalesquote: PDF + Sp_Invoicepdf + Sp_Salesquotelog + Sp_Salesquote Q11 + inventory (approve); log + Q11 (reject)
+app.MapPost("/api/salesquote/approve", async (HttpContext context, SqlConnection connection, IWebHostEnvironment env) =>
+    await Api.SalesQuoteApprovalSaveHandler.Handle(context, connection, env)).DisableAntiforgery();
+
+app.MapPost("/api/Sales/savesalesquote", async (HttpContext context, SqlConnection connection, IWebHostEnvironment env) =>
+    await Api.SalesQuoteApprovalSaveHandler.Handle(context, connection, env)).DisableAntiforgery();
+
+app.MapGet("/api/salesquote/generate-invoice-no-by-date", Api.SalesQuoteGenerateInvoiceNoHandler.Handle);
+app.MapGet("/api/Sales/getinvoicenogeneratesalesquote", Api.SalesQuoteGenerateInvoiceNoHandler.Handle);
+
+// Legacy: updatepackingstatus (Sp_Salesquote Q15) + convert approved quote → draft sales invoice (Sp_Salesbill chain)
+app.MapGet("/api/salesquote/update-packing-status", async (HttpContext http, SqlConnection connection) =>
+    await Api.SalesQuoteConvertToSalesHandler.HandleUpdatePackingStatus(http, connection));
+app.MapPost("/api/salesquote/convert-to-sales", async (HttpContext http, SqlConnection connection) =>
+    await Api.SalesQuoteConvertToSalesHandler.HandleConvert(http, connection)).DisableAntiforgery();
+
+// Legacy POST /Sales/Savebilldetails — customer create bill (draft invoice + lines + VAT breakdown)
+app.MapPost("/api/Sales/Savebilldetails", async (HttpContext http, SqlConnection connection) =>
+    await Api.SalesBillSaveFromCustomerHandler.Handle(http, connection)).DisableAntiforgery();
+
+// Legacy POST /Sales/Editsalesbilldetails — in-place draft sales bill update (same Id)
+app.MapPost("/api/Sales/Editsalesbilldetails", async (HttpContext http, SqlConnection connection) =>
+    await Api.SalesBillEditFromCustomerHandler.Handle(http, connection)).DisableAntiforgery();
+
+// Legacy POST /Sales/getdispatchwarehouseid → { dispatchid }
+app.MapPost("/api/Sales/getdispatchwarehouseid", Api.DispatchWarehouseHelper.HandleGetDispatchWarehouseId).DisableAntiforgery();
+app.MapPost("/api/stocklocation/dispatch-warehouse-id", Api.DispatchWarehouseHelper.HandleGetDispatchWarehouseId).DisableAntiforgery();
+
+// Packing list entry: quote lines (Sp_Salesquotedetails Q8 + inventory + lock). Form field billid. Registered here so POST matches like other /api/Sales/* minimal routes.
+app.MapPost("/api/Sales/Getcustomerbillsdetailssalesquotepack", async (HttpContext ctx, IConfiguration cfg) =>
 {
-    try
-    {
-        var json = await System.Text.Json.JsonSerializer.DeserializeAsync<System.Text.Json.JsonElement>(context.Request.Body);
-        int quoteId = json.GetProperty("quoteId").GetInt32();
-        string status = json.GetProperty("status").GetString() ?? "Approved";
-        string comments = json.GetProperty("comments").GetString() ?? "";
-        string userId = json.GetProperty("userid").GetString() ?? "Admin";
-
-        string approvalValue = status == "Approved" ? "1" : "2";
-
-        await connection.OpenAsync();
-        using var command = new SqlCommand("UPDATE Tbl_Salesquote SET Managerapprovestatus = @Status, Status = @OverallStatus, Remarks = ISNULL(Remarks, '') + ' ' + @Comments WHERE Id = @Id", connection);
-        command.Parameters.AddWithValue("@Status", approvalValue);
-        command.Parameters.AddWithValue("@OverallStatus", status);
-        command.Parameters.AddWithValue("@Comments", comments);
-        command.Parameters.AddWithValue("@Id", quoteId);
-
-        await command.ExecuteNonQueryAsync();
-        
-        return Results.Ok(new { success = true, message = $"Sales quote {status.ToLower()} successfully" });
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { success = false, message = ex.Message });
-    }
-});
+    var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
+    form.TryGetValue("billid", out var billidVals);
+    var billid = billidVals.Count > 0 ? billidVals.ToString() : "";
+    if (string.IsNullOrWhiteSpace(billid))
+        return Results.BadRequest(new { List1 = Array.Empty<object>(), Message = "Bill ID is required" });
+    var (list, msg) = await Api.PackingQuoteDetailsHelper.LoadAsync(cfg, billid, ctx.RequestAborted);
+    return Results.Ok(new { List1 = list, Message = msg });
+}).DisableAntiforgery();
 
 app.MapGet("/api/debug-multi-schema", async (SqlConnection connection) => {
     await connection.OpenAsync();
@@ -11792,136 +11928,127 @@ app.MapGet("/api/salesquote/details/{id}", async (string id, SqlConnection conne
     {
         await connection.OpenAsync();
         
-        // Fetch Header (Use Sp_Salesquote Query 4 as requested by user pattern)
+        // Use legacy Query 6 for header
         using var headerCmd = new SqlCommand("Sp_Salesquote", connection);
         headerCmd.CommandType = CommandType.StoredProcedure;
         headerCmd.Parameters.AddWithValue("@Id", id);
-        headerCmd.Parameters.AddWithValue("@Query", 4);
-        headerCmd.Parameters.AddWithValue("@Isdelete", 0);
-        headerCmd.Parameters.AddWithValue("@Userid", "");
-        headerCmd.Parameters.AddWithValue("@Customerid", "");
-        headerCmd.Parameters.AddWithValue("@Billdate", "");
-        headerCmd.Parameters.AddWithValue("@Duedate", "");
-        headerCmd.Parameters.AddWithValue("@Salesquoteno", "");
-        headerCmd.Parameters.AddWithValue("@Amountsare", "");
-        headerCmd.Parameters.AddWithValue("@Vatnumber", "");
-        headerCmd.Parameters.AddWithValue("@Billing_address", "");
-        headerCmd.Parameters.AddWithValue("@Sales_location", "");
-        headerCmd.Parameters.AddWithValue("@Sub_total", "");
-        headerCmd.Parameters.AddWithValue("@Vat", "");
-        headerCmd.Parameters.AddWithValue("@Vat_amount", "");
-        headerCmd.Parameters.AddWithValue("@Grand_total", "");
-        headerCmd.Parameters.AddWithValue("@Conversion_amount", DBNull.Value);
-        headerCmd.Parameters.AddWithValue("@Currency_rate", DBNull.Value);
-        headerCmd.Parameters.AddWithValue("@Currency", "");
-        headerCmd.Parameters.AddWithValue("@Terms", "");
+        headerCmd.Parameters.AddWithValue("@Query", 6);
+        // Placeholders
+        headerCmd.Parameters.AddWithValue("@Userid", ""); headerCmd.Parameters.AddWithValue("@Customerid", ""); headerCmd.Parameters.AddWithValue("@Billdate", ""); headerCmd.Parameters.AddWithValue("@Duedate", ""); headerCmd.Parameters.AddWithValue("@Salesquoteno", ""); headerCmd.Parameters.AddWithValue("@Amountsare", ""); headerCmd.Parameters.AddWithValue("@Vatnumber", ""); headerCmd.Parameters.AddWithValue("@Billing_address", ""); headerCmd.Parameters.AddWithValue("@Sales_location", ""); headerCmd.Parameters.AddWithValue("@Sub_total", ""); headerCmd.Parameters.AddWithValue("@Vat", ""); headerCmd.Parameters.AddWithValue("@Vat_amount", ""); headerCmd.Parameters.AddWithValue("@Grand_total", ""); headerCmd.Parameters.AddWithValue("@Conversion_amount", DBNull.Value); headerCmd.Parameters.AddWithValue("@Currency_rate", DBNull.Value); headerCmd.Parameters.AddWithValue("@Currency", ""); headerCmd.Parameters.AddWithValue("@Terms", "");
         
-        object? header = null;
-        int internalId = 0;
+        Dictionary<string, object> headerDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         using (var reader = await headerCmd.ExecuteReaderAsync())
         {
             if (await reader.ReadAsync())
             {
                 var columns = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
-                internalId = Convert.ToInt32(reader["Id"]);
-                var headerDict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                 foreach (var col in columns)
                 {
                     headerDict[col] = reader[col] == DBNull.Value ? null : reader[col];
                 }
                 
-                // Map fields to match SalesQuoteApprovalView expectations
-                headerDict["Status"] = columns.Contains("Statussalesquote") ? reader["Statussalesquote"] : (columns.Contains("Status") ? reader["Status"] : "");
-                headerDict["Customername"] = (columns.Contains("Companyname") ? reader["Companyname"] : reader["Customerdisplayname"] ?? "")?.ToString();
-                headerDict["Billing_address"] = reader["Billing_address"]?.ToString();
-                headerDict["Contact"] = columns.Contains("Contact") ? reader["Contact"]?.ToString() : "";
-                headerDict["Phoneno"] = columns.Contains("Phonenumber") ? reader["Phonenumber"]?.ToString() : "";
-                
-                // Ensure totals and remarks are mapped for the frontend's underscored expectations
-                headerDict["Sub_total"] = columns.Contains("Sub_total") ? reader["Sub_total"] : (columns.Contains("Subtotal") ? reader["Subtotal"] : 0);
-                headerDict["Vat_amount"] = columns.Contains("Vat_amount") ? reader["Vat_amount"] : (columns.Contains("Vatamount") ? reader["Vatamount"] : 0);
-                headerDict["Grand_total"] = columns.Contains("Grand_total") ? reader["Grand_total"] : (columns.Contains("Grandtotal") ? reader["Grandtotal"] : 0);
-                headerDict["Remarks"] = columns.Contains("Remarks") ? reader["Remarks"] : "";
-                headerDict["Terms"] = columns.Contains("Terms") ? reader["Terms"] : "";
-                headerDict["Duedate"] = columns.Contains("Duedate") ? reader["Duedate"] : null;
-                headerDict["Billdate"] = columns.Contains("Billdate") ? reader["Billdate"] : null;
-                headerDict["Catelogid"] = columns.Contains("Catelogid") ? reader["Catelogid"] : (columns.Contains("Catalogid") ? reader["Catalogid"] : null);
-
-                header = headerDict;
+                // Explicit legacy mappings for frontend
+                headerDict["subtotal"] = reader["Sub_total"];
+                headerDict["vat"] = reader["Vat_Amount"];
+                headerDict["grandtotal"] = reader["Grand_total"];
+                headerDict["shipping_address"] = reader["Shipping_address"];
+                headerDict["remarks"] = reader["Remarks"];
+                headerDict["salesperson1"] = reader["Salesperson"];
+                headerDict["phoneno"] = reader["Phoneno"];
             }
         }
         
-        if (header == null) return Results.Json(new { success = false, message = "Quote not found" });
+        if (headerDict.Count == 0) return Results.Json(new { success = false, message = "Quote not found" });
 
-        // Update @Id to internalId for detail queries
-        id = internalId.ToString();
-
-        // Fetch Items (Join with ProductVariants to get names)
+        // Items logic (Query 3)
         var items = new List<object>();
-        using var itemsCmd = new SqlCommand(@"
-            SELECT d.*, pv.Itemname as VariantItemName, p.Itemname as ProductItemName
-            FROM Tbl_Salesquotedetails d
-            LEFT JOIN Tbl_Productvariants pv ON d.Itemid = pv.Id
-            LEFT JOIN Tbl_Product p ON pv.Productid = p.Id
-            WHERE d.Salesquoteid = @Id AND (d.Isdelete = '0' OR d.Isdelete IS NULL)
-        ", connection);
-        itemsCmd.Parameters.AddWithValue("@Id", id);
+        using var itemsCmd = new SqlCommand("Sp_Salesquotedetails", connection);
+        itemsCmd.CommandType = CommandType.StoredProcedure;
+        itemsCmd.Parameters.AddWithValue("@Salesquoteid", id);
+        itemsCmd.Parameters.AddWithValue("@Query", 3);
+        // Placeholders
+        itemsCmd.Parameters.AddWithValue("@Id", ""); itemsCmd.Parameters.AddWithValue("@Userid", ""); itemsCmd.Parameters.AddWithValue("@Itemid", ""); itemsCmd.Parameters.AddWithValue("@Qty", ""); itemsCmd.Parameters.AddWithValue("@Amount", ""); itemsCmd.Parameters.AddWithValue("@Vat", ""); itemsCmd.Parameters.AddWithValue("@Vat_id", ""); itemsCmd.Parameters.AddWithValue("@Total", ""); itemsCmd.Parameters.AddWithValue("@Status", ""); itemsCmd.Parameters.AddWithValue("@Isdelete", "");
+
         using (var reader = await itemsCmd.ExecuteReaderAsync())
         {
-            var itemColumns = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
+            var itemCols = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
             while (await reader.ReadAsync())
             {
-                string itemName = reader["VariantItemName"]?.ToString() ?? reader["ProductItemName"]?.ToString() ?? "";
-                
                 items.Add(new {
                     Id = reader["Id"],
                     Itemid = reader["Itemid"]?.ToString(),
-                    Itemname = itemName,
-                    Qty = reader["Qty"]?.ToString(),
-                    Amount = reader["Amount"]?.ToString(),
-                    Vat = reader["Vat_id"]?.ToString(), // Vat_id column stores the numeric percentage
-                    Vatid = reader["Vat"]?.ToString(),   // Vat column stores the ID
-                    Total = reader["Total"]?.ToString(),
-                    Description = itemColumns.Contains("Description") ? reader["Description"]?.ToString() : ""
+                    Itemname = reader["Itemname"]?.ToString(),
+                    Qty = reader["Qty"],
+                    Amount = reader["Amount"],
+                    Vat = reader["Vat"]?.ToString(),
+                    Vat_id = reader["Vat_id"]?.ToString(),
+                    Total = reader["Total"],
+                    Modelno = itemCols.Contains("Modelno") ? reader["Modelno"]?.ToString() : "",
+                    Shortdescription = itemCols.Contains("Shortdescription") ? reader["Shortdescription"]?.ToString() : ""
                 });
             }
         }
 
-        // Fetch Categories
+        // Categories (Query 3)
         var categories = new List<object>();
-        using var catCmd = new SqlCommand(@"
-            SELECT pcd.*, pcd.Description as ResolvedCatName
-            FROM Tbl_Purchasecategorydetails pcd
-            WHERE pcd.Billid = @Id 
-              AND pcd.Type = 'Salesquote'
-              AND (pcd.Isdelete = '0' OR pcd.Isdelete IS NULL)
-        ", connection);
-        catCmd.Parameters.AddWithValue("@Id", id);
+        using var catCmd = new SqlCommand("Sp_Purchasecategorydetails", connection);
+        catCmd.CommandType = CommandType.StoredProcedure;
+        catCmd.Parameters.AddWithValue("@Billid", id);
+        catCmd.Parameters.AddWithValue("@Type", "Salesquote");
+        catCmd.Parameters.AddWithValue("@Query", 3);
+        // Placeholders
+        catCmd.Parameters.AddWithValue("@Id", ""); catCmd.Parameters.AddWithValue("@Customerid", ""); catCmd.Parameters.AddWithValue("@Categoryid", ""); catCmd.Parameters.AddWithValue("@Description", ""); catCmd.Parameters.AddWithValue("@Amount", ""); catCmd.Parameters.AddWithValue("@Vatvalue", ""); catCmd.Parameters.AddWithValue("@Vatid", ""); catCmd.Parameters.AddWithValue("@Total", ""); catCmd.Parameters.AddWithValue("@Customer", ""); catCmd.Parameters.AddWithValue("@Isdelete", "0");
+
         using (var reader = await catCmd.ExecuteReaderAsync())
         {
+            var catCols = new HashSet<string>(Enumerable.Range(0, reader.FieldCount).Select(reader.GetName), StringComparer.OrdinalIgnoreCase);
             while (await reader.ReadAsync())
             {
+                string? catId = null;
+                if (catCols.Contains("Categoryid")) catId = reader["Categoryid"]?.ToString();
+                else if (catCols.Contains("chartofaccountsid")) catId = reader["chartofaccountsid"]?.ToString();
+
                 categories.Add(new {
                     Id = reader["Id"],
-                    Categoryid = reader["Categoryid"]?.ToString(),
-                    Itemname = reader["ResolvedCatName"]?.ToString(), // Map to Itemname for unified table
-                    Qty = "1",
-                    Amount = reader["Amount"]?.ToString(),
-                    Vat = reader["Vatvalue"]?.ToString(),
-                    Vatid = reader["Vatid"]?.ToString(),
-                    Total = reader["Total"]?.ToString(),
-                    isCategory = true
+                    Categoryid = catId,
+                    Name = reader["Name"]?.ToString(),
+                    Amount = reader["Amount"],
+                    Vatvalue = reader["Vatvalue"],
+                    Vatid = catCols.Contains("Vatid") ? reader["Vatid"]?.ToString() : null,
+                    Total = reader["Total"],
+                    Description = reader["Description"]?.ToString()
                 });
             }
         }
 
-        return Results.Ok(new { success = true, header, items, categories });
+        return Results.Json(new { 
+            success = true, 
+            header = headerDict, 
+            List1 = items, 
+            List3 = categories,
+            // Legacy top-level properties
+            subtotal = headerDict.ContainsKey("subtotal") ? headerDict["subtotal"] : "0.00",
+            vat = headerDict.ContainsKey("vat") ? headerDict["vat"] : "0.00",
+            grandtotal = headerDict.ContainsKey("grandtotal") ? headerDict["grandtotal"] : "0.00",
+            shipping_address = headerDict.ContainsKey("shipping_address") ? headerDict["shipping_address"] : "",
+            remarks = headerDict.ContainsKey("remarks") ? headerDict["remarks"] : "",
+            salesperson1 = headerDict.ContainsKey("salesperson1") ? headerDict["salesperson1"] : "",
+            phoneno = headerDict.ContainsKey("phoneno") ? headerDict["phoneno"] : ""
+        });
     }
     catch (Exception ex)
     {
         return Results.Json(new { success = false, message = ex.Message });
     }
+    finally { if (connection.State == ConnectionState.Open) await connection.CloseAsync(); }
 });
+
+
+// Legacy GET (same pipeline as getinvoicenogeneratesalesquote — avoids 404 when controller action not matched)
+app.MapGet("/api/Sales/Salesbillreasonforeditsalesquote", Api.SalesQuoteBillReasonForEditHandler.Handle);
+
+// Legacy GET /Sales/seteditreasonsalesquote — edit/delete request approve & reject (Sp_Salesquotelog Q4 + Sp_Salesquote Q7; delete request → soft-delete chain)
+app.MapGet("/api/Sales/seteditreasonsalesquote", Api.SalesQuoteSetEditReasonHandler.Handle);
 
 app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnection connection) =>
 {
@@ -11937,10 +12064,11 @@ app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnec
 
         await connection.OpenAsync();
 
-        // Read current status + owner
+        // Read current status + owner + customer (log must match Sp_Salesquotelog Q3 filters: Type Editrequest/Deleterequest)
         string? status = null;
         string? owner = null;
-        using (var cmd = new SqlCommand("SELECT Status, Userid FROM Tbl_Salesquote WHERE Id=@Id", connection))
+        string? customerid = null;
+        using (var cmd = new SqlCommand("SELECT Status, Userid, Customerid FROM Tbl_Salesquote WHERE Id=@Id", connection))
         {
             cmd.Parameters.AddWithValue("@Id", quoteId);
             using var rd = await cmd.ExecuteReaderAsync();
@@ -11948,6 +12076,7 @@ app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnec
             {
                 status = rd["Status"]?.ToString();
                 owner = rd["Userid"]?.ToString();
+                customerid = rd["Customerid"]?.ToString();
             }
         }
         if (status == null) return Results.NotFound(new { success = false, message = "Quote not found" });
@@ -11973,23 +12102,20 @@ app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnec
             await upd.ExecuteNonQueryAsync();
         }
 
-        // Add log entry
+        // Sp_Salesquotelog Q1 — same shape as SalesQuoteBillReasonForEditHandler so Q3 lists it under Edit/Delete requests tab
         using (var log = new SqlCommand("Sp_Salesquotelog", connection))
         {
             log.CommandType = CommandType.StoredProcedure;
-            log.Parameters.AddWithValue("@Id", DBNull.Value);
-            log.Parameters.AddWithValue("@Customerid", "");
+            log.Parameters.AddWithValue("@Id", "");
+            log.Parameters.AddWithValue("@Customerid", customerid ?? "");
             log.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
             log.Parameters.AddWithValue("@Approveuserid", "");
             log.Parameters.AddWithValue("@Editreason", reason ?? "");
-            log.Parameters.AddWithValue("@Comments", "Edit request sent");
+            log.Parameters.AddWithValue("@Comments", "");
             log.Parameters.AddWithValue("@Isdelete", "0");
-            log.Parameters.AddWithValue("@Status", "Active");
-            log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            log.Parameters.AddWithValue("@Type", "Salesquote");
-            log.Parameters.AddWithValue("@Userid", userid ?? "");
-            log.Parameters.AddWithValue("@Catelogid", DBNull.Value);
-            log.Parameters.AddWithValue("@Approveddate", DBNull.Value);
+            log.Parameters.AddWithValue("@Status", "0");
+            log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss", CultureInfo.InvariantCulture));
+            log.Parameters.AddWithValue("@Type", "Editrequest");
             log.Parameters.AddWithValue("@Query", 1);
             await log.ExecuteNonQueryAsync();
         }
@@ -12002,11 +12128,273 @@ app.MapPost("/api/salesquote/editrequest", async (HttpContext context, SqlConnec
     }
 });
 
+/// <summary>Legacy: approved/rejected/converted quote — user asks manager to delete (status → Delete request sent).</summary>
+app.MapPost("/api/salesquote/deleterequest", async (HttpContext context, SqlConnection connection) =>
+{
+    try
+    {
+        var body = await context.Request.ReadFromJsonAsync<Dictionary<string, object?>>() ?? new Dictionary<string, object?>();
+        var idStr = body.TryGetValue("id", out var idObj) ? idObj?.ToString() : null;
+        var userid = body.TryGetValue("userid", out var uObj) ? (uObj?.ToString() ?? "") : "";
+        var reason = body.TryGetValue("reason", out var rObj) ? (rObj?.ToString() ?? "") : "";
+
+        if (!int.TryParse(idStr, out var quoteId) || quoteId <= 0)
+            return Results.BadRequest(new { success = false, message = "Invalid salesquote id" });
+
+        await connection.OpenAsync();
+
+        string? status = null;
+        string? owner = null;
+        string? customerid = null;
+        using (var cmd = new SqlCommand("SELECT Status, Userid, Customerid FROM Tbl_Salesquote WHERE Id=@Id AND (Isdelete IS NULL OR Isdelete = '0' OR Isdelete = 0)", connection))
+        {
+            cmd.Parameters.AddWithValue("@Id", quoteId);
+            using var rd = await cmd.ExecuteReaderAsync();
+            if (await rd.ReadAsync())
+            {
+                status = rd["Status"]?.ToString();
+                owner = rd["Userid"]?.ToString();
+                customerid = rd["Customerid"]?.ToString();
+            }
+        }
+        if (status == null) return Results.NotFound(new { success = false, message = "Quote not found" });
+
+        if (!string.Equals((owner ?? "").Trim(), (userid ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { success = false, message = "Deleting is not possible" });
+
+        var st = (status ?? "").Trim();
+        if (st.Equals("Delete request sent", StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { success = false, message = "Already sent the delete request. Waiting for manager approval" });
+
+        var needsRequest = st.Equals("Approved", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Rejected", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Converted", StringComparison.OrdinalIgnoreCase);
+
+        if (!needsRequest)
+            return Results.Ok(new { success = false, message = "Delete request is only for approved, rejected, or converted quotes" });
+
+        using (var upd = new SqlCommand("UPDATE Tbl_Salesquote SET Status = 'Delete request sent' WHERE Id=@Id", connection))
+        {
+            upd.Parameters.AddWithValue("@Id", quoteId);
+            await upd.ExecuteNonQueryAsync();
+        }
+
+        // Sp_Salesquotelog Q1 — Type Deleterequest matches SalesQuoteApprovalDetailsHandler Sp_Salesquotelog Q3 filter
+        using (var log = new SqlCommand("Sp_Salesquotelog", connection))
+        {
+            log.CommandType = CommandType.StoredProcedure;
+            log.Parameters.AddWithValue("@Id", "");
+            log.Parameters.AddWithValue("@Customerid", customerid ?? "");
+            log.Parameters.AddWithValue("@Salesquoteid", quoteId.ToString());
+            log.Parameters.AddWithValue("@Approveuserid", "");
+            log.Parameters.AddWithValue("@Editreason", reason ?? "");
+            log.Parameters.AddWithValue("@Comments", "");
+            log.Parameters.AddWithValue("@Isdelete", "0");
+            log.Parameters.AddWithValue("@Status", "0");
+            log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss", CultureInfo.InvariantCulture));
+            log.Parameters.AddWithValue("@Type", "Deleterequest");
+            log.Parameters.AddWithValue("@Query", 1);
+            await log.ExecuteNonQueryAsync();
+        }
+
+        return Results.Ok(new { success = true, message = "Delete request sent. Wait for manager approval" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { success = false, message = ex.Message }, statusCode: 500);
+    }
+});
+
+/// <summary>Soft-delete draft/active quote (owner only). Mirrors legacy deleteSalesquote core SP chain; omits MVC stock/salesbill C# helpers.</summary>
+app.MapPost("/api/salesquote/soft-delete", async (HttpContext context, SqlConnection connection) =>
+{
+    try
+    {
+        var body = await context.Request.ReadFromJsonAsync<Dictionary<string, object?>>() ?? new Dictionary<string, object?>();
+        var idStr = body.TryGetValue("id", out var idObj) ? idObj?.ToString() : null;
+        var userid = body.TryGetValue("userid", out var uObj) ? (uObj?.ToString() ?? "") : "";
+
+        if (!int.TryParse(idStr, out var quoteId) || quoteId <= 0)
+            return Results.BadRequest(new { success = false, message = "Invalid salesquote id" });
+
+        await connection.OpenAsync();
+        using var transaction = connection.BeginTransaction();
+
+        string? customerid = null;
+        string? owner = null;
+        string? status = null;
+        using (var cmd = new SqlCommand("SELECT Customerid, Userid, Status FROM Tbl_Salesquote WHERE Id=@Id AND (Isdelete IS NULL OR Isdelete = '0' OR Isdelete = 0)", connection, transaction))
+        {
+            cmd.Parameters.AddWithValue("@Id", quoteId);
+            using var rd = await cmd.ExecuteReaderAsync();
+            if (await rd.ReadAsync())
+            {
+                customerid = rd["Customerid"]?.ToString();
+                owner = rd["Userid"]?.ToString();
+                status = rd["Status"]?.ToString();
+            }
+        }
+
+        if (status == null)
+        {
+            await transaction.RollbackAsync();
+            return Results.NotFound(new { success = false, message = "Quote not found" });
+        }
+
+        if (!string.Equals((owner ?? "").Trim(), (userid ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            await transaction.RollbackAsync();
+            return Results.Ok(new { success = false, message = "Deleting is not possible" });
+        }
+
+        var st = (status ?? "").Trim();
+        if (st.Equals("Approved", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Rejected", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Converted", StringComparison.OrdinalIgnoreCase))
+        {
+            await transaction.RollbackAsync();
+            return Results.Ok(new { success = false, message = "Deleting is not possible. Use delete request for approved or rejected quotes." });
+        }
+        if (st.Equals("Delete request sent", StringComparison.OrdinalIgnoreCase))
+        {
+            await transaction.RollbackAsync();
+            return Results.Ok(new { success = false, message = "Already sent the delete request. Waiting for manager approval" });
+        }
+
+        var idString = quoteId.ToString();
+
+        try
+        {
+            using (var command = new SqlCommand("Sp_Salesquote", connection, transaction))
+            {
+                command.CommandType = CommandType.StoredProcedure;
+                command.Parameters.AddWithValue("@Query", 17);
+                command.Parameters.AddWithValue("@Id", quoteId);
+                command.Parameters.AddWithValue("@Isdelete", "1");
+                command.Parameters.AddWithValue("@Userid", DBNull.Value);
+                command.Parameters.AddWithValue("@Customerid", DBNull.Value);
+                command.Parameters.AddWithValue("@Billdate", DBNull.Value);
+                command.Parameters.AddWithValue("@Duedate", DBNull.Value);
+                command.Parameters.AddWithValue("@Salesquoteno", DBNull.Value);
+                command.Parameters.AddWithValue("@Amountsare", DBNull.Value);
+                command.Parameters.AddWithValue("@Vatnumber", DBNull.Value);
+                command.Parameters.AddWithValue("@Billing_address", DBNull.Value);
+                command.Parameters.AddWithValue("@Sales_location", DBNull.Value);
+                command.Parameters.AddWithValue("@Sub_total", DBNull.Value);
+                command.Parameters.AddWithValue("@Vat", DBNull.Value);
+                command.Parameters.AddWithValue("@Vat_amount", DBNull.Value);
+                command.Parameters.AddWithValue("@Grand_total", DBNull.Value);
+                command.Parameters.AddWithValue("@Conversion_amount", 1);
+                command.Parameters.AddWithValue("@Currency_rate", 1);
+                command.Parameters.AddWithValue("@Currency", DBNull.Value);
+                command.Parameters.AddWithValue("@Terms", DBNull.Value);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            using (var del = new SqlCommand("Sp_Salesquotedetails", connection, transaction))
+            {
+                del.CommandType = CommandType.StoredProcedure;
+                del.Parameters.AddWithValue("@Id", "");
+                del.Parameters.AddWithValue("@Userid", "");
+                del.Parameters.AddWithValue("@Salesquoteid", idString);
+                del.Parameters.AddWithValue("@Itemid", "");
+                del.Parameters.AddWithValue("@Qty", "");
+                del.Parameters.AddWithValue("@Amount", "");
+                del.Parameters.AddWithValue("@Vat", "");
+                del.Parameters.AddWithValue("@Vat_id", "");
+                del.Parameters.AddWithValue("@Total", "");
+                del.Parameters.AddWithValue("@Status", "");
+                del.Parameters.AddWithValue("@Isdelete", "1");
+                del.Parameters.AddWithValue("@Type", "");
+                del.Parameters.AddWithValue("@Query", 6);
+                await del.ExecuteNonQueryAsync();
+            }
+
+            using (var log = new SqlCommand("Sp_Salesquotelog", connection, transaction))
+            {
+                log.CommandType = CommandType.StoredProcedure;
+                log.Parameters.AddWithValue("@Id", DBNull.Value);
+                log.Parameters.AddWithValue("@Customerid", customerid ?? "");
+                log.Parameters.AddWithValue("@Salesquoteid", idString);
+                log.Parameters.AddWithValue("@Approveuserid", userid ?? "");
+                log.Parameters.AddWithValue("@Editreason", "");
+                log.Parameters.AddWithValue("@Comments", "Deleted");
+                log.Parameters.AddWithValue("@Isdelete", "1");
+                log.Parameters.AddWithValue("@Status", "Active");
+                log.Parameters.AddWithValue("@Changeddate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                log.Parameters.AddWithValue("@Type", "Delete");
+                log.Parameters.AddWithValue("@Userid", userid ?? "");
+                log.Parameters.AddWithValue("@Catelogid", DBNull.Value);
+                log.Parameters.AddWithValue("@Approveddate", DBNull.Value);
+                log.Parameters.AddWithValue("@Query", 1);
+                await log.ExecuteNonQueryAsync();
+            }
+
+            using (var inv = new SqlCommand("Sp_Inventory", connection, transaction))
+            {
+                inv.CommandType = CommandType.StoredProcedure;
+                inv.Parameters.AddWithValue("@Billid", idString);
+                inv.Parameters.AddWithValue("@Inventory_type", "4");
+                inv.Parameters.AddWithValue("@Isdelete", "1");
+                inv.Parameters.AddWithValue("@Query", 11);
+                await inv.ExecuteNonQueryAsync();
+            }
+
+            using (var v = new SqlCommand("Sp_Purchasevatdetails", connection, transaction))
+            {
+                v.CommandType = CommandType.StoredProcedure;
+                v.Parameters.AddWithValue("@Id", 0);
+                v.Parameters.AddWithValue("@Billid", idString);
+                v.Parameters.AddWithValue("@Customerid", "");
+                v.Parameters.AddWithValue("@Type", "Salesquote");
+                v.Parameters.AddWithValue("@Vatid", "");
+                v.Parameters.AddWithValue("@Price", "");
+                v.Parameters.AddWithValue("@Vatamount", "");
+                v.Parameters.AddWithValue("@Isdelete", "1");
+                v.Parameters.AddWithValue("@Query", 4);
+                await v.ExecuteNonQueryAsync();
+            }
+
+            using (var c = new SqlCommand("Sp_Purchasecategorydetails", connection, transaction))
+            {
+                c.CommandType = CommandType.StoredProcedure;
+                c.Parameters.AddWithValue("@Id", "");
+                c.Parameters.AddWithValue("@Billid", idString);
+                c.Parameters.AddWithValue("@Customerid", "");
+                c.Parameters.AddWithValue("@Type", "Salesquote");
+                c.Parameters.AddWithValue("@Categoryid", "");
+                c.Parameters.AddWithValue("@Description", "");
+                c.Parameters.AddWithValue("@Amount", "");
+                c.Parameters.AddWithValue("@Vatvalue", "");
+                c.Parameters.AddWithValue("@Vatid", "");
+                c.Parameters.AddWithValue("@Total", "");
+                c.Parameters.AddWithValue("@Customer", "");
+                c.Parameters.AddWithValue("@Isdelete", "1");
+                c.Parameters.AddWithValue("@Query", 4);
+                await c.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+            return Results.Ok(new { success = true, message = "Deleted successfully" });
+        }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { success = false, message = ex.Message }, statusCode: 500);
+    }
+});
+
 app.MapControllers();
 app.Run();
 
 public class SalesQuoteFormData
 {
+    public string? Id { get; set; }
     public string? Userid { get; set; }
     public string? Customerid { get; set; }
     public string? Billdate { get; set; }

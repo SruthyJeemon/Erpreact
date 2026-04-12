@@ -40,7 +40,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 // Import the logo
 import logo from '../assets/asas_logo.png';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
 const PickupNotificationSection = () => {
     const theme = useTheme();

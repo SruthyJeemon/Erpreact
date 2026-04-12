@@ -630,7 +630,7 @@ const ReportSection = () => {
 
       setLoading(true);
       try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+        const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
 
         // If roleId is missing, try to fetch it by role name (similar to Dashboard.jsx logic)
         if (!roleId && userRole) {

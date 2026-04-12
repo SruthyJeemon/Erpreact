@@ -57,7 +57,7 @@ const WarehouseReceiveItems = ({ hideHeader = false }) => {
     const [order, setOrder] = useState('desc');
     const [orderBy, setOrderBy] = useState('Bill_date');
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     // Support both Userid and Email-based logins
     const userId = user.Userid || user.userid || user.id || user.Id || user.email || user.Email;

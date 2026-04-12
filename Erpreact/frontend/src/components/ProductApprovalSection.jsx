@@ -56,7 +56,7 @@ const ProductApprovalSection = ({ onNavigate }) => {
     });
 
     const user = JSON.parse(localStorage.getItem('user') || '{}');
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5023';
+    const API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim().replace(/\/$/, '');
     const navigate = useNavigate();
 
     const v = (obj, key) => {

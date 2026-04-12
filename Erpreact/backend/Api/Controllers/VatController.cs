@@ -34,7 +34,7 @@ FROM dbo.Tbl_Vat
 WHERE (@Isdelete = '' OR CONVERT(varchar(10), ISNULL(Isdelete, 0)) = @Isdelete)
   AND (@Status = '' OR LTRIM(RTRIM(ISNULL(Status,''))) = LTRIM(RTRIM(@Status)))
   AND (@Vatname = '' OR ISNULL(Vatname,'') LIKE '%' + @Vatname + '%')
-ORDER BY Id DESC;";
+ORDER BY Id ASC;";
 
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
